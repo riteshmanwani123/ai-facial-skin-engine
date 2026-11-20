@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin | CLARITY</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/clinic.css">
+    <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <img src="/static/images/clarity_logo.jpg" alt="CLARITY" class="brand-logo-img">
+                <div class="brand-text">
+                    <span class="brand-name">CLARITY <span class="highlight">Admin</span></span>
+                    <span class="brand-tag">MANAGE DOCTOR &amp; CLINIC STAFF ACCOUNTS</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span class="session-bar" id="session-bar"></span>
+                <a class="btn btn-secondary btn-small" href="/"><i class="fa-solid fa-hospital"></i> Clinic dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="portal-main">
+        <section class="card">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-user-doctor"></i> Add a doctor / clinician account</h2>
+                <p>Doctors and clinic staff can't self-register — create their login here and share the credentials with them directly. They can change their password later from their own account (not yet implemented in this prototype).</p>
+            </div>
+            <form id="add-clinician-form" class="auth-form">
+                <label>Full name<input type="text" name="full_name" required placeholder="Dr. Jane Smith"></label>
+                <label>Email (their login username)<input type="email" name="email" required autocomplete="off"></label>
+                <label>Temporary password (min. 8 characters)<input type="text" name="password" required minlength="8" placeholder="Share this with them securely"></label>
+                <div id="add-clinician-error" class="form-error"></div>
+                <button type="submit" class="btn btn-primary full"><i class="fa-solid fa-user-plus"></i> Create clinician account</button>
+            </form>
+        </section>
+
+        <section class="card" style="margin-top:20px;">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-list"></i> Existing doctor / clinician accounts</h2>
+            </div>
+            <div class="table-wrap">
+                <table class="clinic-table">
+                    <thead><tr><th>Name</th><th>Email</th><th>Created</th><th>Last login</th><th></th></tr></thead>
+                    <tbody id="clinicians-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/auth-guard.js"></script>
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>

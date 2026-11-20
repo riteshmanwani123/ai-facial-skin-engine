@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create account | CLARITY</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <img src="/static/images/clarity_logo.jpg" alt="CLARITY" class="brand-logo-img">
+                <div class="brand-text">
+                    <span class="brand-name">CLARITY <span class="highlight">by Dr. Tanya</span></span>
+                    <span class="brand-tag">CREATE ACCOUNT</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="btn btn-secondary btn-small" href="/"><i class="fa-solid fa-hospital"></i> Clinic dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="portal-main auth-main">
+        <section class="card auth-card">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-user-plus"></i> Create your patient account</h2>
+                <p>Takes under a minute. Doctor &amp; clinic staff accounts are created by an administrator — see <a href="/login">sign in</a>.</p>
+            </div>
+
+            <form id="signup-form" class="auth-form">
+                <label>Full name<input type="text" name="full_name" required></label>
+                <label>Email<input type="email" name="email" required autocomplete="email"></label>
+                <label>Password (min. 8 characters)<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+
+                <div id="patient-fields">
+                    <label>Gender<select name="sex"><option value="">Prefer not to say</option><option>Female</option><option>Male</option><option>Other</option></select></label>
+                    <label>Age<input type="number" name="age" min="1" max="120"></label>
+                    <label class="full">Any previous skin condition or history?<textarea name="previous_skin_condition" rows="2" placeholder="Leave blank if none"></textarea></label>
+                    <label class="full check"><input type="checkbox" name="consent_research" checked> I consent to my de-identified scans being used to help improve this AI model</label>
+                </div>
+
+                <div id="signup-error" class="form-error"></div>
+                <button type="submit" class="btn btn-primary full"><i class="fa-solid fa-user-plus"></i> Create account</button>
+            </form>
+            <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+        </section>
+    </main>
+
+    <script src="/static/js/signup.js"></script>
+</body>
+</html>

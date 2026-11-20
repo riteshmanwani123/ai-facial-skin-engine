@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clarity Skin Check | Patient Portal</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <img src="/static/images/clarity_logo.jpg" alt="CLARITY" class="brand-logo-img">
+                <div class="brand-text">
+                    <span class="brand-name">CLARITY <span class="highlight">Skin Check</span></span>
+                    <span class="brand-tag">AI SCAN · DOCTOR CONSULTATION · FOLLOW-UP</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span class="session-bar" id="session-bar"></span>
+                <a class="btn btn-secondary btn-small" href="/"><i class="fa-solid fa-hospital"></i> Clinic dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="portal-main">
+        <div class="wizard-progress" id="wizard-progress">
+            <span class="wp-step active" data-step="scan">1. Live scan</span>
+            <span class="wp-step" data-step="report">2. AI report</span>
+            <span class="wp-step" data-step="payment">3. Consultation</span>
+            <span class="wp-step" data-step="pending">4. Doctor review</span>
+            <span class="wp-step" data-step="completed">5. Your plan</span>
+        </div>
+
+        <!-- STEP 1: guided live scan -->
+        <section class="card wiz-step active" id="step-scan">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-camera"></i> Guided facial scan</h2>
+                <p>Five quick photos — front, left cheek, right cheek, chin &amp; neck, and forehead — so your doctor can compare the skin across your whole face.</p>
+            </div>
+            <div class="privacy-banner">
+                <i class="fa-solid fa-eye-slash"></i>
+                <div><strong>Your eyes are covered automatically.</strong> They are blacked out on this device before any photo is saved or sent, so we never receive an image of your eyes.</div>
+            </div>
+            <div class="view-chips" id="view-chips"></div>
+            <div class="capture-prompt" id="capture-prompt"></div>
+            <div class="camera-wrap" id="camera-wrap">
+                <video id="cam-video" autoplay playsinline muted></video>
+                <canvas id="cam-live"></canvas>
+                <div class="face-guide-oval"></div>
+                <div class="cam-status" id="cam-status">Camera is off</div>
+            </div>
+            <div id="cam-error" class="form-error"></div>
+            <div class="action-bar cam-actions">
+                <button class="btn btn-secondary" id="cam-start"><i class="fa-solid fa-video"></i> Turn on camera</button>
+                <button class="btn btn-primary" id="cam-capture" style="display:none;" disabled><i class="fa-solid fa-circle-dot"></i> Capture</button>
+                <button class="btn btn-secondary" id="cam-skip" style="display:none;"><i class="fa-solid fa-forward"></i> Skip this angle</button>
+                <button class="btn btn-primary" id="cam-analyze" style="display:none;"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze my skin</button>
+            </div>
+            <div class="upload-fallback">
+                <span>No camera access? </span>
+                <label class="link-btn">Upload a photo for this angle<input type="file" id="file-fallback" accept="image/*" style="display:none;"></label>
+            </div>
+            <div class="loading-state" id="scan-loading" style="display:none;">
+                <div class="spinner"></div>
+                <h3>Analyzing your skin…</h3>
+            </div>
+        </section>
+
+        <!-- STEP 2: AI report -->
+        <section class="card wiz-step" id="step-report">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-chart-simple"></i> Your AI skin report</h2>
+                <p id="report-subtitle">Screening result — not a medical diagnosis.</p>
+            </div>
+            <div id="report-content"></div>
+            <div id="report-views"></div>
+            <div id="recommended-products"></div>
+            <div class="consult-cta card">
+                <h3><i class="fa-solid fa-user-doctor"></i> Get a doctor's diagnosis</h3>
+                <p>Every AI scan is followed by a real board-certified dermatologist review: symptoms, diagnosis,
+                   treatment plan, prescription if needed, and a follow-up date to track your progress.</p>
+                <div class="price-row"><span class="price">$99</span><span class="muted">one consultation, incl. a 30-day follow-up check</span></div>
+                <button class="btn btn-primary full" id="start-consult-btn"><i class="fa-solid fa-arrow-right"></i> Proceed to doctor consultation</button>
+            </div>
+        </section>
+
+        <!-- STEP 3: payment (demo) -->
+        <section class="card wiz-step" id="step-payment">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-receipt"></i> Confirm your consultation</h2>
+                <p>This is a local research prototype — no real payment processor is connected.</p>
+            </div>
+            <div class="demo-payment-box">
+                <div class="dp-row"><span>Dermatologist consultation</span><strong>$99.00</strong></div>
+                <div class="dp-note"><i class="fa-solid fa-circle-info"></i> DEMO ONLY — no card details are collected, no real charge occurs. This simply marks the case as paid so a doctor can review it.</div>
+                <button class="btn btn-primary full" id="confirm-pay-btn"><i class="fa-solid fa-lock"></i> Confirm $99 (demo) &amp; send to doctor</button>
+            </div>
+        </section>
+
+        <!-- STEP 4: pending doctor review -->
+        <section class="card wiz-step" id="step-pending">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-hourglass-half"></i> Waiting for your doctor's review</h2>
+                <p>Your scan, AI report and intake details have been sent to the doctor queue.</p>
+            </div>
+            <div class="pending-box">
+                <div class="spinner"></div>
+                <p>This page updates automatically once your doctor completes the review.</p>
+                <p class="muted">Demo tip: open the <a href="/doctor" target="_blank">Doctor Portal</a> in another tab to complete this case.</p>
+            </div>
+        </section>
+
+        <!-- STEP 5: completed plan / follow-up -->
+        <section class="card wiz-step" id="step-completed">
+            <div class="card-header">
+                <h2><i class="fa-solid fa-file-medical"></i> Your doctor's plan</h2>
+            </div>
+            <div id="plan-content"></div>
+            <div class="consult-cta card" id="followup-cta">
+                <h3><i class="fa-solid fa-calendar-check"></i> Follow-up scan</h3>
+                <p id="followup-note"></p>
+                <button class="btn btn-primary full" id="followup-scan-btn"><i class="fa-solid fa-camera"></i> Do my follow-up scan now</button>
+            </div>
+            <div id="comparison-content"></div>
+        </section>
+    </main>
+
+    <script src="/static/js/auth-guard.js"></script>
+    <script src="/static/js/eye-safe-capture.js"></script>
+    <script src="/static/js/patient.js"></script>
+</body>
+</html>

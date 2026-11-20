@@ -1,0 +1,46 @@
+# Python virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Temporary & transfer archives
+*.tar
+*.tar.gz
+*.zip
+.tmp*
+
+# Large legacy model weights (>100MB exceeds GitHub limit)
+dinov2_skin_lora.pt
+
+# Large training datasets and local scans
+data/
+facial-skin-images-datasets/
+*.parquet
+
+# Node & Next.js build artifacts
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/certs/
+*.tsbuildinfo
+
+# Logs & test artifacts
+*.log
+acne_training_log.txt
+
+# Environment variables
+.env
+.env.local
+.env.production

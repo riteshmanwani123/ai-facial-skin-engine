@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clarity | Doctor Portal</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/clinic.css">
+    <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <img src="/static/images/clarity_logo.jpg" alt="CLARITY" class="brand-logo-img">
+                <div class="brand-text">
+                    <span class="brand-name">CLARITY <span class="highlight">Doctor Portal</span></span>
+                    <span class="brand-tag">CASE QUEUE · DIAGNOSIS · CONTINUAL LEARNING</span>
+                </div>
+            </div>
+            <nav class="nav-tabs">
+                <button class="nav-btn active" data-tab="queue-tab"><i class="fa-solid fa-list-check"></i> Queue <span class="badge" id="queue-count"></span></button>
+                <button class="nav-btn" data-tab="followups-tab"><i class="fa-solid fa-calendar-day"></i> Follow-ups due <span class="badge" id="followups-count"></span></button>
+                <button class="nav-btn" data-tab="history-tab"><i class="fa-solid fa-clock-rotate-left"></i> History</button>
+            </nav>
+            <div class="header-actions">
+                <span class="session-bar" id="session-bar"></span>
+                <a class="btn btn-secondary btn-small" href="/"><i class="fa-solid fa-hospital"></i> Clinic dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="portal-main wide">
+        <section id="queue-tab" class="tab-pane active">
+            <div class="card">
+                <div class="card-header"><h2><i class="fa-solid fa-list-check"></i> Cases awaiting review</h2>
+                    <p>Paid consultations, ready for diagnosis. AI-drafted notes are provided as a starting point only.</p></div>
+                <div class="queue-grid" id="queue-grid"></div>
+            </div>
+        </section>
+
+        <section id="followups-tab" class="tab-pane" style="display:none;">
+            <div class="card">
+                <div class="card-header"><h2><i class="fa-solid fa-calendar-day"></i> Follow-ups due</h2>
+                    <p>Completed cases whose recommended follow-up date has passed and no follow-up scan has been recorded yet.</p></div>
+                <div class="queue-grid" id="followups-grid"></div>
+            </div>
+        </section>
+
+        <section id="history-tab" class="tab-pane" style="display:none;">
+            <div class="card">
+                <div class="card-header"><h2><i class="fa-solid fa-clock-rotate-left"></i> Completed consultations</h2></div>
+                <div class="history-table-wrap">
+                    <table class="clinic-table">
+                        <thead><tr><th>Patient</th><th>Completed</th><th>Diagnosis</th><th>Follow-up</th><th>Result</th></tr></thead>
+                        <tbody id="history-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section id="report-tab" class="tab-pane" style="display:none;">
+            <div class="card">
+                <div class="card-header"><h2><i class="fa-solid fa-stethoscope"></i> Case report</h2>
+                    <button class="btn btn-secondary btn-small" id="back-to-queue" style="margin-top:8px;"><i class="fa-solid fa-arrow-left"></i> Back to queue</button>
+                </div>
+                <div id="case-summary"></div>
+                <form id="report-form" class="report-form-grid">
+                    <div class="ai-draft-note"><i class="fa-solid fa-wand-magic-sparkles"></i> Fields below are pre-filled from the AI scan. Review and edit everything before submitting — you are the diagnosis of record.</div>
+                    <label class="full">Symptoms<textarea name="symptoms" rows="2" required></textarea></label>
+                    <label class="full">Diagnosis<textarea name="diagnosis" rows="2" required></textarea></label>
+                    <label class="full">Cure / treatment plan<textarea name="cure" rows="2" required></textarea></label>
+                    <label class="full">Prescription<textarea name="prescription" rows="2" required></textarea></label>
+                    <label class="full">Previous condition / records<textarea name="previous_condition" rows="2"></textarea></label>
+                    <label>Follow-up in (days)<input type="number" name="followup_days" min="1" max="365" value="30" required></label>
+                    <label>Confirm skin type<select name="verified_skin_type">
+                        <option value="dry">Dry</option><option value="oily">Oily</option>
+                        <option value="normal">Normal</option><option value="combination">Combination</option>
+                    </select></label>
+                    <div class="full">
+                        <div class="pf-label" style="margin-bottom:6px;">Confirm/correct severity grades (0–5) — feeds model learning</div>
+                        <div class="sev-mini-grid" id="sev-mini-grid"></div>
+                    </div>
+                    <div id="report-error" class="form-error full"></div>
+                    <button type="submit" class="btn btn-primary full"><i class="fa-solid fa-check"></i> Submit report &amp; save to patient learning</button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/auth-guard.js"></script>
+    <script src="/static/js/doctor.js"></script>
+</body>
+</html>

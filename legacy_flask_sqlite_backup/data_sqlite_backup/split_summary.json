@@ -1,0 +1,35 @@
+{
+  "train": {
+    "images": 3231,
+    "faces": 1293,
+    "per_class_faces": {
+      "normal": 400,
+      "dry": 390,
+      "oily": 366,
+      "combination": 137
+    },
+    "with_severity_labels": 159
+  },
+  "val": {
+    "images": 609,
+    "faces": 228,
+    "per_class_faces": {
+      "normal": 70,
+      "dry": 69,
+      "oily": 65,
+      "combination": 24
+    },
+    "with_severity_labels": 24
+  },
+  "test": {
+    "images": 253,
+    "faces": 172,
+    "per_class_faces": {
+      "dry": 53,
+      "normal": 49,
+      "oily": 45,
+      "combination": 25
+    },
+    "with_severity_labels": 15
+  }
+}

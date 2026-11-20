@@ -1,0 +1,525 @@
+/* patient.js — patient self-service portal (sign in required): live scan -> AI report ->
+   paid doctor consultation -> doctor's plan -> 30-day follow-up scan & comparison. */
+(function () {
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const nice = s => String(s).replaceAll('_', ' ').replace(/^\w/, c => c.toUpperCase());
+    const fmtDate = iso => iso ? new Date(iso).toLocaleString() : '—';
+    const api = (url, opts = {}) => fetch(url, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...opts })
+        .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.detail || r.statusText); return d; });
+
+    const state = {
+        patientId: null, patientName: '',
+        consultationId: null,          // set from the server (/api/me/journey) — the server decides where the patient is
+        scanId: null, followupMode: false, followupDay: null, pollTimer: null, journey: null,
+    };
+
+    const STEPS = ['scan', 'report', 'payment', 'pending', 'completed'];
+    function showStep(name) {
+        STEPS.forEach(s => document.getElementById('step-' + s).classList.toggle('active', s === name));
+        document.querySelectorAll('.wp-step').forEach(el => {
+            const i = STEPS.indexOf(el.dataset.step), cur = STEPS.indexOf(name);
+            el.classList.toggle('active', el.dataset.step === name);
+            el.classList.toggle('done', i < cur);
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (name === 'payment' && typeof openPayment === 'function') openPayment();
+    }
+
+    // ---------------------------------------------------------------- step 1: guided, eye-safe scan
+    // Five angles. Every photo is redacted in the browser (EyeSafeCapture) before it exists as an image
+    // we can save or send: the live preview already shows the eyes covered, and capture reads from that.
+    const VIEWS = [
+        { key: 'front', label: 'Front', arrow: '●', title: 'Look straight at the camera', hint: 'Keep your face centred and relaxed. The photo is taken automatically.', required: true },
+        { key: 'left', label: 'Left cheek', arrow: '→', title: 'Turn your head to your right', hint: 'So your LEFT cheek faces the camera. Hold it there — we take the photo for you.' },
+        { key: 'right', label: 'Right cheek', arrow: '←', title: 'Turn your head to your left', hint: 'So your RIGHT cheek faces the camera. Hold it there — we take the photo for you.' },
+        { key: 'up', label: 'Chin & neck', arrow: '↑', title: 'Tilt your head back', hint: 'Lift your chin so your chin and neck are visible. Hold it there — we take the photo for you.' },
+        { key: 'down', label: 'Forehead', arrow: '↓', title: 'Tilt your head down', hint: 'Lower your chin so your forehead is clearly visible. Hold it there — we take the photo for you.' },
+    ];
+    const FORCE_AFTER_MS = 5000; // the camera takes each photo by itself; if the angle still isn't reached after this long, the manual button also works anyway
+
+    const els = {
+        video: document.getElementById('cam-video'), live: document.getElementById('cam-live'),
+        start: document.getElementById('cam-start'), capture: document.getElementById('cam-capture'),
+        skip: document.getElementById('cam-skip'), analyze: document.getElementById('cam-analyze'),
+        status: document.getElementById('cam-status'), err: document.getElementById('cam-error'),
+        chips: document.getElementById('view-chips'), prompt: document.getElementById('capture-prompt'),
+        file: document.getElementById('file-fallback'),
+    };
+    let session = null, forceMode = false, mismatchSince = null;
+    state.views = {};      // key -> { dataUrl, polygons, width, height, poseOk }
+    state.skipped = {};    // key -> true
+    state.current = 'front';
+
+    const pending = () => VIEWS.find(v => !state.views[v.key] && !state.skipped[v.key]);
+    const viewDef = key => VIEWS.find(v => v.key === key);
+
+    function renderChips() {
+        els.chips.innerHTML = VIEWS.map(v => {
+            const done = state.views[v.key], skipped = state.skipped[v.key], cur = state.current === v.key && !done;
+            const cls = done ? 'done' : skipped ? 'skipped' : cur ? 'current' : '';
+            return `<div class="view-chip ${cls}" data-view="${v.key}" title="${done ? 'Tap to retake' : ''}">
+                ${done ? `<img class="vc-thumb" src="${done.dataUrl}" alt="${esc(v.label)}">` : `<div class="vc-thumb"></div>`}
+                <span>${done ? '✓ ' : ''}${esc(v.label)}</span>${done ? '<span class="vc-retake">tap to retake</span>' : skipped ? '<span class="vc-retake">skipped</span>' : ''}</div>`;
+        }).join('');
+        els.chips.querySelectorAll('.view-chip.done, .view-chip.skipped').forEach(c => c.onclick = () => {
+            const k = c.dataset.view; delete state.views[k]; delete state.skipped[k]; setCurrent(k);
+        });
+    }
+
+    function setCurrent(key) {
+        state.current = key; forceMode = false; mismatchSince = null;
+        const v = viewDef(key);
+        if (v) {
+            els.prompt.innerHTML = `<div class="cp-title"><span class="cp-arrow">${v.arrow}</span>${esc(v.title)}</div><div class="cp-hint">${esc(v.hint)}</div>`;
+            if (session) session.setTarget(key);
+        }
+        els.skip.style.display = session && v && !v.required ? 'inline-flex' : 'none';
+        refreshButtons();
+        renderChips();
+    }
+
+    function refreshButtons() {
+        const allDone = !pending();
+        els.analyze.style.display = allDone && state.views.front ? 'inline-flex' : 'none';
+        els.capture.style.display = session && !allDone ? 'inline-flex' : 'none';
+        els.skip.style.display = session && !allDone && !viewDef(state.current).required ? 'inline-flex' : 'none';
+        if (allDone) { els.prompt.innerHTML = `<div class="cp-title">All set — review the photos above</div><div class="cp-hint">Tap any photo to retake it, or analyze your skin now.</div>`; }
+    }
+
+    function setStatus(text, cls) { els.status.textContent = text; els.status.className = 'cam-status ' + (cls || ''); }
+
+    const wrap = document.getElementById('camera-wrap');
+    let progressEl = null;
+    function setProgress(p) {
+        if (!wrap) return;
+        if (!progressEl) { progressEl = document.createElement('div'); progressEl.className = 'cam-progress'; progressEl.innerHTML = '<div></div>'; wrap.appendChild(progressEl); }
+        progressEl.style.opacity = p > 0 ? '1' : '0'; progressEl.firstChild.style.width = Math.round(p * 100) + '%';
+    }
+    function flash() { if (!wrap) return; wrap.classList.remove('flash'); void wrap.offsetWidth; wrap.classList.add('flash'); }
+
+    const FIT_TEXT = { back: 'Move a little further from the camera', closer: 'Move a little closer', centre: 'Centre your face in the frame' };
+
+    function onLiveUpdate(s) {
+        const manualLabel = '<i class="fa-solid fa-circle-dot"></i> Capture now';
+        if (!s.safe) { els.capture.disabled = true; els.capture.innerHTML = manualLabel; setProgress(0); setStatus(s.reason || 'Looking for your face…', 'bad'); mismatchSince = null; return; }
+        setProgress(s.progress || 0);
+        if (s.poseOk) {
+            mismatchSince = null; forceMode = false; els.capture.disabled = false; els.capture.innerHTML = manualLabel;
+            if (s.fit === 'back' || s.fit === 'centre') setStatus('Eyes covered ✓ · ' + FIT_TEXT[s.fit], 'warn');
+            else setStatus(s.progress > 0 ? 'Eyes covered ✓ · Hold still — taking the photo…' : 'Eyes covered ✓ · Angle ✓', 'ok');
+        } else {
+            if (mismatchSince === null) mismatchSince = performance.now();
+            forceMode = performance.now() - mismatchSince > FORCE_AFTER_MS;
+            els.capture.disabled = !forceMode; els.capture.innerHTML = manualLabel;
+            setStatus('Eyes covered ✓ · ' + ((s.fit === 'back' || s.fit === 'centre') ? FIT_TEXT[s.fit] : (s.guide || FIT_TEXT[s.fit] || 'Adjust your angle')), 'warn');
+        }
+    }
+
+    // The session found the best frame of a held angle by itself.
+    function onAutoShot(shot) {
+        const key = state.current, v = viewDef(key);
+        if (!v || state.views[key] || !pending()) return;
+        acceptShot(key, shot); flash(); setProgress(0);
+        setStatus(`✓ ${v.label} captured${shot.poseOk ? '' : ' (closest angle we could get)'}`, shot.poseOk ? 'ok' : 'warn');
+    }
+
+    function acceptShot(key, shot) {
+        state.views[key] = shot; delete state.skipped[key];
+        els.err.textContent = '';
+        const next = pending();
+        setCurrent(next ? next.key : key);
+        if (!next) refreshButtons();
+    }
+
+    els.start.addEventListener('click', async () => {
+        els.err.textContent = '';
+        els.start.disabled = true; setStatus('Loading eye-privacy protection…', 'warn');
+        try {
+            await window.EyeSafeCapture.preload();
+        } catch (e) {
+            // Fail closed: without the eye-masking model we do not take camera photos at all.
+            els.err.textContent = 'Eye-privacy protection could not load, so the camera is disabled. Please refresh the page and try again.';
+            els.start.disabled = false; setStatus('Camera is off', 'bad'); return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } } });
+            session = new window.EyeSafeCapture.LiveSession(els.video, els.live, onLiveUpdate, onAutoShot);
+            session.setTarget(state.current);
+            await session.start(stream);
+            els.start.style.display = 'none';
+            setCurrent(state.current);
+        } catch (err) {
+            els.err.textContent = 'Camera unavailable (' + err.message + '). You can upload a photo for each angle below instead.';
+            els.start.disabled = false; setStatus('Camera is off', 'bad');
+        }
+    });
+
+    els.capture.addEventListener('click', () => {
+        if (!session) return;
+        try {
+            const shot = session.capture({ force: forceMode });
+            shot.poseOk = session.state.poseOk;
+            acceptShot(state.current, shot);
+        } catch (e) { els.err.textContent = e.message; }
+    });
+
+    els.skip.addEventListener('click', () => {
+        const v = viewDef(state.current);
+        if (!v || v.required) return;
+        state.skipped[v.key] = true;
+        const next = pending();
+        setCurrent(next ? next.key : v.key);
+        refreshButtons(); renderChips();
+    });
+
+    els.file.addEventListener('change', async e => {
+        const file = e.target.files[0]; e.target.value = '';
+        if (!file) return;
+        els.err.textContent = '';
+        setStatus('Covering eyes on your photo…', 'warn');
+        try {
+            await window.EyeSafeCapture.preload();
+            const shot = await window.EyeSafeCapture.redactFile(file, state.current);
+            acceptShot(state.current, shot);
+            setStatus(shot.poseOk ? 'Photo added — eyes covered ✓' : `Photo added — eyes covered ✓ (it doesn't look like a "${viewDef(state.current)?.label || ''}" angle; tap its thumbnail to retake)`, shot.poseOk ? 'ok' : 'warn');
+        } catch (err) {
+            els.err.textContent = err.message || 'Could not use that photo';
+            setStatus(session ? 'Camera on' : 'Camera is off', 'bad');
+        }
+    });
+
+    function stopCamera() { if (session) { session.stop(); session = null; } setProgress(0); els.start.style.display = 'inline-flex'; els.start.disabled = false; els.capture.style.display = 'none'; els.skip.style.display = 'none'; setStatus('Camera is off'); }
+
+    function resetCapture() {
+        stopCamera(); state.views = {}; state.skipped = {}; els.analyze.style.display = 'none'; els.err.textContent = '';
+        setCurrent('front');
+    }
+
+    els.analyze.addEventListener('click', () => {
+        if (!state.views.front) return;
+        document.getElementById('scan-loading').style.display = 'block';
+        els.analyze.disabled = true;
+        const extra = {}, redaction = { front: { polygons: state.views.front.polygons } };
+        VIEWS.filter(v => v.key !== 'front' && state.views[v.key]).forEach(v => {
+            extra[v.key] = state.views[v.key].dataUrl; redaction[v.key] = { polygons: state.views[v.key].polygons };
+        });
+        const body = { image_base64: state.views.front.dataUrl, extra_views: extra, client_redaction: redaction, patient_id: state.patientId };
+        if (state.followupMode && state.consultationId) body.consultation_id = state.consultationId;   // the server picks the open check-in day
+        api('/api/analyze', { method: 'POST', body: JSON.stringify(body) })
+            .then(data => {
+                document.getElementById('scan-loading').style.display = 'none';
+                els.analyze.disabled = false;
+                state.scanId = data.scan_id;
+                const wasFollowup = state.followupMode;
+                state.followupMode = false; state.followupDay = null;
+                resetCapture();
+                if (wasFollowup) syncJourney();                       // reload the plan with the new check-in on it
+                else { renderReport(data); showStep('report'); }
+            })
+            .catch(err => {
+                document.getElementById('scan-loading').style.display = 'none';
+                els.analyze.disabled = false;
+                els.err.textContent = (/^(You already|Your |A new scan)/.test(err.message) ? '' : 'Analysis failed: ') + err.message;
+                if (/^(You already|Your |A new scan)/.test(err.message)) syncJourney();   // the server says this scan isn't allowed now
+            });
+    });
+
+    function resetCameraUI() { resetCapture(); }
+    setCurrent('front');
+
+    // ---------------------------------------------------------------- step 2: AI report
+    let lastReport = null;
+    function radialGauge(score) {
+        return `<div class="report-score-gauge"><svg viewBox="0 0 36 36" class="circular-chart">
+            <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path class="circle" stroke-dasharray="${score}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <text x="18" y="20.35" class="percentage">${score}</text></svg>
+            <div class="muted">Overall skin health index</div></div>`;
+    }
+
+    function renderReport(data) {
+        lastReport = data;
+        const triageRed = data.triage && data.triage.banner_color === 'red';
+        const concerns = Object.entries(data.severity_scores || {}).filter(([a, v]) => v >= 2.0).sort((a, b) => b[1] - a[1]);
+        document.getElementById('report-content').innerHTML = `
+            <div class="report-triage ${triageRed ? 'red' : 'green'}">
+                <strong>${esc(data.triage?.banner_title || '')}</strong>
+                <p style="margin-top:6px; font-size:13px;">${esc(data.triage?.banner_desc || '')}</p>
+            </div>
+            <div class="report-score-row">
+                ${radialGauge(data.overall_health_score)}
+                <div>
+                    <div class="muted">Detected skin type</div>
+                    <div style="font-size:22px; font-weight:700;">${esc((data.skin_type || '').toUpperCase())}</div>
+                    <div class="muted">Confidence ${(data.skin_type_confidence * 100).toFixed(1)}%</div>
+                </div>
+            </div>
+            <h3 style="font-size:14px; margin-bottom:4px;">Conditions detected</h3>
+            <div class="concerns-list">
+                ${concerns.length ? concerns.map(([a, v]) => `
+                    <div class="concern-chip"><div>${esc(nice(a))} — ${v.toFixed(1)}/5.0</div>
+                        <div class="cc-bar"><div class="cc-fill" style="width:${v / 5 * 100}%"></div></div></div>
+                `).join('') : '<p class="muted">No significant concerns flagged by the AI screening.</p>'}
+            </div>`;
+        renderRecommendedProducts(data.routine);
+        renderViewsGallery(data.scan_id, data.views || []);
+    }
+
+    const VIEW_LABELS = { front: 'Front', left: 'Left cheek', right: 'Right cheek', up: 'Chin & neck', down: 'Forehead' };
+    function renderViewsGallery(scanId, keys) {
+        const box = document.getElementById('report-views');
+        if (!box) return;
+        box.innerHTML = keys.length ? `<h3 style="font-size:14px; margin:20px 0 4px;"><i class="fa-solid fa-eye-slash"></i> Your scan photos <span class="muted" style="font-weight:400;">(eyes covered)</span></h3>
+            <div class="views-gallery">${keys.map(k => `<a href="/api/scans/${esc(scanId)}/views/${esc(k)}/image" target="_blank" rel="noopener">
+                <img src="/api/scans/${esc(scanId)}/views/${esc(k)}/image" alt="${esc(VIEW_LABELS[k] || k)}" loading="lazy"><span>${esc(VIEW_LABELS[k] || k)}</span></a>`).join('')}</div>` : '';
+    }
+
+    function renderRecommendedProducts(routine) {
+        const box = document.getElementById('recommended-products');
+        if (!box || !routine) return;
+        const timed = [
+            ...(routine.am_routine || []).map(s => ({ ...s, time: 'AM' })),
+            ...(routine.pm_routine || []).map(s => ({ ...s, time: 'PM' })),
+            ...(routine.weekly_routine || []).map(s => ({ ...s, time: 'Weekly' })),
+        ];
+        const byName = {};
+        timed.forEach(s => {
+            if (!byName[s.product]) byName[s.product] = { ...s, times: [s.time] };
+            else byName[s.product].times.push(s.time);
+        });
+        const products = Object.values(byName);
+        box.innerHTML = `
+            <h3 style="font-size:14px; margin:20px 0 4px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Recommended Dr Tanya products for you</h3>
+            <div class="product-rec-grid">
+                ${products.map(p => `
+                    <div class="product-rec-card">
+                        <div class="prc-head">
+                            <span class="prc-name">${esc(p.product)}</span>
+                            ${p.in_stock === false ? '<span class="sold-out-pill">Sold out</span>' : ''}
+                        </div>
+                        <div class="prc-time">${p.times.join(' + ')}</div>
+                        <p class="prc-details">${esc(p.details)}</p>
+                        <div class="prc-footer">
+                            ${p.price_inr != null ? `<span class="step-price">₹${p.price_inr}${p.list_price_inr > p.price_inr ? ` <s>₹${p.list_price_inr}</s>` : ''}</span>` : ''}
+                            ${p.url ? `<a class="step-shop-link" href="${p.url}" target="_blank" rel="noopener">${p.in_stock === false ? 'View product' : 'Shop now'} <i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            ${routine.notes && routine.notes.length ? `
+                <div class="routine-notes" style="display:block; margin-top:16px;">
+                    <div class="routine-notes-head"><i class="fa-solid fa-circle-info"></i> Good to know</div>
+                    <ul>${routine.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+                </div>` : ''}`;
+    }
+
+    document.getElementById('start-consult-btn').addEventListener('click', () => {
+        api('/api/consultations', { method: 'POST', body: JSON.stringify({ scan_id: state.scanId }) })
+            .then(con => {
+                state.consultationId = con.id;
+                showStep('payment');
+            }).catch(err => alert('Could not start consultation: ' + err.message));
+    });
+
+    // ---------------------------------------------------------------- step 3: choose a time + demo payment
+    // The patient picks an appointment slot first; "Confirm" reserves it and marks the (demo) payment in one request,
+    // so a slot can never be held without a paid consultation, nor a payment taken for a slot that was just lost.
+    const payBtn = document.getElementById('confirm-pay-btn');
+    const sumBox = document.getElementById('appt-summary');
+    let payScheduler = null;
+    function paintSummary(slot) {
+        if (!sumBox) return;
+        sumBox.innerHTML = `
+            <h3>Appointment summary</h3>
+            <div class="kv"><span>Doctor</span><span>Dermatologist (assigned when you confirm)</span></div>
+            <div class="kv"><span>Date</span><span>${slot ? esc(slot.day_label) : '<em class="muted">Choose a time</em>'}</span></div>
+            <div class="kv"><span>Time</span><span>${slot ? esc(slot.label + ' · ' + slot.minutes + ' min ' + slot.tz_label) : '<em class="muted">—</em>'}</span></div>
+            <div class="kv"><span>Includes</span><span>Questionnaire + 5-angle scan + AI report</span></div>
+            <div class="kv"><span>Fee</span><span>$99.00 (demo)</span></div>
+            <p class="muted" style="margin-top:12px; line-height:1.5;">You can reschedule or cancel up to 2 hours before. Your doctor reviews your case, and no product is prescribed until they approve it.</p>`;
+    }
+    function ensurePayScheduler() {
+        if (!payScheduler && window.ClarityScheduler) {
+            payScheduler = window.ClarityScheduler.create(document.getElementById('scheduler'), {
+                onSelect: slot => { payBtn.disabled = !slot; paintSummary(slot); const e = document.getElementById('pay-error'); if (e) e.textContent = ''; },
+            });
+        }
+        return payScheduler;
+    }
+    function openPayment() { payBtn.disabled = !(payScheduler && payScheduler.selected()); paintSummary(payScheduler && payScheduler.selected()); const sc = ensurePayScheduler(); sc && sc.load(); }
+
+    payBtn.addEventListener('click', () => {
+        const slot = payScheduler && payScheduler.selected();
+        const err = document.getElementById('pay-error');
+        if (!slot) { if (err) err.textContent = 'Please choose an appointment time first.'; return; }
+        payBtn.disabled = true; if (err) err.textContent = '';
+        api(`/api/consultations/${state.consultationId}/pay`, { method: 'POST', body: JSON.stringify({ slot_start: slot.start }) })
+            .then(() => { showStep('pending'); pollConsultation(); })
+            .catch(e => {
+                if (err) err.textContent = e.message;
+                if (payScheduler) { payScheduler.clear(); payScheduler.reload(); }    // refresh: the slot was probably just taken
+            });
+    });
+
+    // ---------------------------------------------------------------- step 4: pending (appointment card + doctor review)
+    const apptBox = document.getElementById('appt-card');
+    let reschedScheduler = null, apptSig = '', reschedOpen = false;
+    function renderAppointment(con) {
+        if (!apptBox || reschedOpen) return;
+        const a = con.appointment, sig = a ? [a.id, a.status, a.start, a.can_change].join('|') : 'none';
+        if (sig === apptSig) return;
+        apptSig = sig;
+        if (!a || a.status !== 'booked') {
+            apptBox.innerHTML = `<div class="panel tinted"><h3>Your appointment</h3>
+                <p class="muted" style="margin-bottom:12px;">${a && a.status === 'cancelled' ? 'Your appointment was cancelled.' : 'No appointment time is booked yet.'} Your doctor will still review your case — booking a time lets them plan your consultation.</p>
+                <button type="button" class="btn btn-primary" id="appt-book">Book a time</button></div>`;
+            document.getElementById('appt-book').onclick = () => openResched(con, 'Book a time');
+            return;
+        }
+        apptBox.innerHTML = `<div class="panel tinted"><h3>Your appointment</h3>
+            <div class="kv"><span>Date</span><span>${esc(a.day_label)}</span></div>
+            <div class="kv"><span>Time</span><span>${esc(a.time_label)}</span></div>
+            <div class="kv"><span>Doctor</span><span>${esc(a.doctor_name || 'Dermatologist')}</span></div>
+            <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+                <button type="button" class="btn btn-secondary btn-small" id="appt-resched" ${a.can_change ? '' : 'disabled'}>Reschedule</button>
+                <button type="button" class="btn btn-secondary btn-small" id="appt-cancel" ${a.can_change ? '' : 'disabled'}>Cancel appointment</button>
+            </div>
+            ${a.can_change ? '' : '<p class="muted" style="margin-top:10px;">Changes are closed within 2 hours of the start. Please contact the clinic.</p>'}
+            <div id="appt-err" class="form-error" style="margin-top:8px;"></div></div>`;
+        document.getElementById('appt-resched').onclick = () => openResched(con, 'Reschedule');
+        document.getElementById('appt-cancel').onclick = () => {
+            if (!confirm('Cancel this appointment? You can book another time afterwards.')) return;
+            api(`/api/appointments/${a.id}/cancel`, { method: 'POST' })
+                .then(() => { apptSig = ''; pollConsultation(); })
+                .catch(e => { const x = document.getElementById('appt-err'); if (x) x.textContent = e.message; });
+        };
+    }
+    function openResched(con, title) {
+        reschedOpen = true;
+        apptBox.innerHTML = `<div class="panel"><div class="sched-modal-head"><h3>${esc(title)}</h3><button type="button" class="link-btn" id="resched-close">Close</button></div>
+            <div id="resched-root"></div>
+            <div id="resched-err" class="form-error"></div>
+            <button type="button" class="btn btn-primary" id="resched-confirm" disabled style="margin-top:12px;">Confirm this time</button></div>`;
+        const confirmBtn = document.getElementById('resched-confirm');
+        reschedScheduler = window.ClarityScheduler.create(document.getElementById('resched-root'), { onSelect: slot => { confirmBtn.disabled = !slot; } });
+        reschedScheduler.load();
+        const close = () => { reschedOpen = false; apptSig = ''; renderAppointment(con); };
+        document.getElementById('resched-close').onclick = close;
+        confirmBtn.onclick = () => {
+            const slot = reschedScheduler.selected(); if (!slot) return;
+            confirmBtn.disabled = true;
+            api(`/api/consultations/${state.consultationId}/appointment`, { method: 'POST', body: JSON.stringify({ slot_start: slot.start }) })
+                .then(() => { reschedOpen = false; apptSig = ''; pollConsultation(); })
+                .catch(e => { document.getElementById('resched-err').textContent = e.message; reschedScheduler.clear(); reschedScheduler.reload(); });
+        };
+    }
+
+    function pollConsultation() {
+        clearTimeout(state.pollTimer);
+        api(`/api/consultations/${state.consultationId}`).then(con => {
+            if (con.status === 'completed') { renderPlan(con); showStep('completed'); return; }
+            renderAppointment(con);
+            state.pollTimer = setTimeout(pollConsultation, 4000);
+        }).catch(() => { state.pollTimer = setTimeout(pollConsultation, 6000); });
+    }
+
+    // ---------------------------------------------------------------- step 5: plan + follow-up
+    function renderPlan(con) {
+        document.getElementById('plan-content').innerHTML = `
+            <div class="note-box" style="margin-top:0;"><strong>Doctor-approved plan.</strong> Follow only the instructions issued by your consulting doctor.</div>
+            <div class="plan-field" style="margin-top:18px;"><div class="pf-label">Symptoms</div><div class="pf-value">${esc(con.symptoms || '—')}</div></div>
+            <div class="plan-field"><div class="pf-label">Diagnosis</div><div class="pf-value">${esc(con.diagnosis || '—')}</div></div>
+            <div class="plan-field"><div class="pf-label">Cure / treatment plan</div><div class="pf-value">${esc(con.cure || '—')}</div></div>
+            <div class="plan-field"><div class="pf-label">Prescription</div><div class="pf-value">${esc(con.prescription || '—')}</div></div>
+            <div class="plan-field"><div class="pf-label">Previous condition / records</div><div class="pf-value">${esc(con.previous_condition || '—')}</div></div>`;
+        const shortDate = iso => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
+        const side = document.getElementById('plan-side');
+        if (side) side.innerHTML = `
+            <h3>Your care timeline</h3>
+            <div style="margin-bottom:12px;"><span class="tag">Reviewed by ${esc(con.doctor_name || 'your doctor')}</span></div>
+            <ul class="timeline">
+                ${con.appointment && con.appointment.status !== 'cancelled' ? `<li><span class="tl-date">${esc(shortDate(con.appointment.start))}</span><div><div class="tl-title">Consultation appointment</div><div class="tl-sub">${esc(con.appointment.time_label)} with ${esc(con.appointment.doctor_name || 'your doctor')}.</div></div></li>` : ''}
+                <li><span class="tl-date">${esc(shortDate(con.completed_at))}</span><div><div class="tl-title">Scan + doctor consultation</div><div class="tl-sub">Your scan was reviewed and this plan approved.</div></div></li>
+                <li><span class="tl-date">${esc(((con.checkpoints || [])[0] || { opens_label: '' }).opens_label.split(' ').slice(1).join(' '))}</span><div><div class="tl-title">Check-in scans · Day 15, 30 &amp; 45</div><div class="tl-sub">The first opens 15 days after your consultation. See below.</div></div></li>
+            </ul>
+            `;
+        renderCheckpoints(con.checkpoints || [], !!(state.journey && state.journey.can_start_new));
+    }
+
+    // Day 15 / 30 / 45 check-in scans: only on their own calendar days, so the comparison shows real change from the
+    // doctor's prescription, products and medicines.
+    function renderCheckpoints(cps, canStartNew) {
+        const chip = c => c.status === 'done' ? '<span class="pill ok">Done</span>' : c.status === 'available' ? '<span class="pill warn">Open now</span>'
+            : c.status === 'missed' ? '<span class="pill danger">Missed</span>' : `<span class="pill">Opens ${esc(c.opens_label)}</span>`;
+        const open = cps.find(c => c.status === 'available');
+        document.getElementById('followup-note').innerHTML = `
+            <ul class="timeline cp" style="margin:0 0 10px;">${cps.map(c => `<li><span class="tl-date">${esc(c.label)}</span>
+                <div><div class="tl-title">${esc(c.status === 'done' ? 'Check-in scan completed' : c.status === 'available' ? 'Your check-in scan is open' : c.status === 'missed' ? 'Window passed' : 'Not open yet')}</div>
+                <div class="tl-sub">${esc(c.opens_label)}${c.status === 'available' ? ' – ' + esc(c.closes_label) : ''}</div></div>${chip(c)}</li>`).join('')}</ul>
+            <p class="muted" style="line-height:1.5;">Scans are only available on these check-in days, counted from the day your doctor completed your consultation, so we can show the real difference your prescription, products and medicines make.</p>`;
+        const btn = document.getElementById('followup-scan-btn');
+        if (open) { btn.style.display = 'block'; btn.disabled = false; btn.dataset.day = open.day; btn.innerHTML = `<i class="fa-solid fa-camera"></i> Start my Day ${open.day} scan`; }
+        else if (canStartNew) { btn.style.display = 'block'; btn.disabled = false; btn.dataset.day = ''; btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Start a new assessment'; }
+        else { btn.style.display = 'none'; }
+        renderComparison(cps);
+    }
+
+    document.getElementById('followup-scan-btn').addEventListener('click', e => {
+        const day = e.currentTarget.dataset.day;
+        state.followupMode = !!day; state.followupDay = day ? Number(day) : null;
+        resetCameraUI();
+        const h = document.getElementById('scan-title'), eb = document.getElementById('scan-eyebrow');
+        if (h) h.textContent = day ? `Your Day ${day} check-in scan.` : 'Your facial scan, guided.';
+        if (eb) eb.textContent = day ? `Check-in · Day ${day}` : 'Clarity journey / Step 1 of 5';
+        showStep('scan');
+    });
+
+    function renderComparison(cps) {
+        const box = document.getElementById('comparison-content');
+        const done = (cps || []).filter(c => c.status === 'done' && c.comparison);
+        if (!done.length) { box.innerHTML = ''; return; }
+        const deltaClass = d => d > 0.05 ? 'up' : d < -0.05 ? 'down' : 'flat';
+        const arrow = d => d > 0.05 ? '▲' : d < -0.05 ? '▼' : '—';
+        box.innerHTML = `<h3 style="font-size:20px; margin:26px 0 4px;">Your progress</h3>
+            <p class="muted" style="margin-bottom:6px;">Each check-in compared with your first scan. Lower severity and a higher score both mean improvement.</p>` +
+            done.map(c => {
+                const cmp = c.comparison, rows = Object.entries(cmp.per_attribute || {}).filter(([, v]) => Math.abs(v.delta) > 0.05);
+                return `<h4 style="margin:18px 0 6px; font-size:15px;">${esc(c.label)} vs first scan</h4>
+                <div class="compare-grid">
+                    <div class="compare-card"><div>Overall health score</div>
+                        <div>${cmp.score_before ?? '—'} → ${cmp.score_after ?? '—'}
+                        <span class="cmp-delta ${deltaClass(cmp.score_delta || 0)}">${arrow(cmp.score_delta || 0)} ${cmp.score_delta != null ? Math.abs(cmp.score_delta) : ''}</span></div></div>
+                    ${rows.map(([a, v]) => `<div class="compare-card"><div>${esc(nice(a))}</div>
+                        <div>${v.before.toFixed(1)} → ${v.after.toFixed(1)}
+                        <span class="cmp-delta ${deltaClass(v.delta)}">${arrow(v.delta)} ${Math.abs(v.delta).toFixed(1)}</span></div></div>`).join('')}
+                </div>`;
+            }).join('');
+    }
+
+    // ---------------------------------------------------------------- the server decides which step the patient is on
+    async function syncJourney() {
+        let j;
+        try { j = await api('/api/me/journey'); } catch (e) { showStep('scan'); return; }
+        state.journey = j; state.consultationId = j.consultation_id || null;
+        clearTimeout(state.pollTimer);
+        if (j.stage === 'report') { state.scanId = j.report.scan_id; renderReport(j.report); showStep('report'); }
+        else if (j.stage === 'payment') { showStep('payment'); }
+        else if (j.stage === 'pending') { showStep('pending'); apptSig = ''; pollConsultation(); }
+        else if (j.stage === 'completed') {
+            api(`/api/consultations/${state.consultationId}`).then(con => { renderPlan(con); showStep('completed'); }).catch(() => showStep('scan'));
+        } else { state.followupMode = false; showStep('scan'); }
+    }
+
+    // ---------------------------------------------------------------- auth gate + resume in-progress session
+    (async function init() {
+        const user = await window.requireAuth('patient');
+        if (!user) return; // requireAuth already redirected to /login
+        state.patientId = user.patient_id;
+        state.patientName = user.full_name;
+        const bar = document.getElementById('session-bar');
+        if (bar) bar.innerHTML = `${esc(user.full_name)} · ID ${esc(user.mrn || user.user_code || '')} · <a href="#" id="logout-link">Sign out</a>`;
+        document.getElementById('logout-link')?.addEventListener('click', e => { e.preventDefault(); window.clarityLogout(); });
+
+        await syncJourney();
+    })();
+})();

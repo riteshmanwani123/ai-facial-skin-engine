@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLARITY by Dr. Tanya | AI Facial Skin Engine</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/clinic.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <img src="/static/images/clarity_logo.jpg" alt="CLARITY by Dr. Tanya" class="brand-logo-img">
+                <div class="brand-text">
+                    <span class="brand-name">CLARITY <span class="highlight">by Dr. Tanya</span></span>
+                    <span class="brand-tag">SKIN HEALTH CONFIDENCE • DINOv2 CLINICAL ENGINE</span>
+                </div>
+            </div>
+            
+            <nav class="nav-tabs">
+                <button class="nav-btn active" data-tab="scan-tab"><i class="fa-solid fa-camera"></i> AI Facial Scan</button>
+                <button class="nav-btn" data-tab="routine-tab"><i class="fa-solid fa-prescription-bottle-medical"></i> Skincare Routine</button>
+                <button class="nav-btn" data-tab="doctor-tab" id="doctor-nav-btn"><i class="fa-solid fa-user-doctor"></i> Doctor Referral <span class="badge alert-badge" id="triage-badge" style="display:none;">ALERT</span></button>
+                <button class="nav-btn" data-tab="patients-tab"><i class="fa-solid fa-hospital-user"></i> Patients</button>
+                <button class="nav-btn" data-tab="metrics-tab"><i class="fa-solid fa-chart-line"></i> Hospital Deliverables</button>
+            </nav>
+
+            <div class="header-actions">
+                <a class="btn btn-secondary btn-small" href="/patient"><i class="fa-solid fa-user"></i> Patient portal</a>
+                <a class="btn btn-secondary btn-small" href="/doctor"><i class="fa-solid fa-user-doctor"></i> Doctor portal</a>
+                <span class="status-indicator"><i class="fa-solid fa-circle"></i> Local DB · Learning on</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <section id="scan-tab" class="tab-pane active">
+            <div class="scan-grid">
+                <div class="card scan-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-face-smile"></i> Facial Image Analysis</h2>
+                        <p>Upload a high-resolution facial photo or capture via webcam</p>
+                    </div>
+
+                    <div class="scan-area" id="drop-zone">
+                        <input type="file" id="file-input" accept="image/*" style="display:none;">
+                        
+                        <div class="upload-placeholder" id="upload-placeholder">
+                            <div class="scan-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                            <h3>Drag & Drop facial image here</h3>
+                            <p>or click to select file from device</p>
+                            <span class="file-hint">Supported format: JPG, PNG, WEBP (Face clearly visible)</span>
+                        </div>
+
+                        <div class="preview-container" id="preview-container" style="display:none;">
+                            <img id="image-preview" src="" alt="Facial Scan Target">
+                            <div class="scan-overlay">
+                                <div class="face-guide"></div>
+                                <div class="scan-line" id="scan-line"></div>
+                            </div>
+                            <button class="btn btn-secondary change-photo-btn" id="reupload-btn"><i class="fa-solid fa-rotate"></i> Change Photo</button>
+                        </div>
+                    </div>
+
+                    <div class="patient-bar">
+                        <label for="patient-select">Patient for this scan</label>
+                        <select id="patient-select"><option value="">Anonymous scan (no patient record)</option></select>
+                        <button class="btn btn-secondary btn-small" data-open-patient-modal><i class="fa-solid fa-user-plus"></i> New patient</button>
+                    </div>
+
+                    <div class="action-bar">
+                        <button class="btn btn-primary analyze-btn" id="analyze-btn" disabled>
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Run DINOv2 Clinical Analysis
+                        </button>
+                    </div>
+
+                    <div class="preset-samples">
+                        <span class="preset-label">Or test with clinical sample images:</span>
+                        <div class="sample-chips">
+                            <button class="sample-chip severe" data-sample="melasma"><i class="fa-solid fa-sun"></i> Severe Melasma / Hyperpigmentation</button>
+                            <button class="sample-chip" data-sample="tanning"><i class="fa-solid fa-umbrella-beach"></i> Sun Tanning & UV Exposure</button>
+                            <button class="sample-chip" data-sample="dry"><i class="fa-solid fa-droplet-slash"></i> Dry Skin</button>
+                            <button class="sample-chip" data-sample="oily"><i class="fa-solid fa-oil-well"></i> Oily Skin</button>
+                            <button class="sample-chip" data-sample="normal"><i class="fa-solid fa-circle-check"></i> Normal Skin</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card results-card" id="results-card">
+                    <div class="empty-state" id="empty-state">
+                        <i class="fa-solid fa-brain-circuit"></i>
+                        <h3>Awaiting Facial Input</h3>
+                        <p>Upload a photo or select a clinical sample to view real-time DINOv2 + CV 11-attribute biometrics, melasma detection, tanning index, and triage safety evaluation.</p>
+                    </div>
+
+                    <div class="loading-state" id="loading-state" style="display:none;">
+                        <div class="spinner"></div>
+                        <h3>Analyzing Facial Biometrics...</h3>
+                        <p>DINOv2 + LoRA & 11 Computer Vision models processing Melasma contrast, Tanning, Fitzpatrick Scale, Texture & Quality.</p>
+                    </div>
+
+                    <div class="results-content" id="results-content" style="display:none;">
+                        <div class="triage-banner" id="triage-banner"></div>
+
+                        <!-- Secondary Badges Row: Skin Tone & Quality -->
+                        <div class="cv-badges-row" id="cv-badges-row" style="margin-bottom:16px; display:flex; gap:12px; flex-wrap:wrap;">
+                            <!-- Filled dynamically -->
+                        </div>
+
+                        <div class="metrics-row">
+                            <div class="metric-box skin-health-box">
+                                <div class="metric-title">Overall Skin Health Index</div>
+                                <div class="radial-gauge">
+                                    <svg viewBox="0 0 36 36" class="circular-chart">
+                                        <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        <path class="circle" id="health-circle" stroke-dasharray="78, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        <text x="18" y="20.35" class="percentage" id="health-score-val">78%</text>
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <div class="metric-box skin-type-box">
+                                <div class="metric-title">Detected Skin Type</div>
+                                <div class="skin-type-display">
+                                    <span class="type-name" id="detected-skin-type">DRY</span>
+                                    <span class="type-conf" id="skin-type-conf">Confidence: 94.8%</span>
+                                </div>
+                                <div class="prob-bars" id="prob-bars"></div>
+                            </div>
+                        </div>
+
+                        <div class="severity-section">
+                            <h3><i class="fa-solid fa-sliders"></i> Dermatological Attribute Sub-Scores</h3>
+                            <div class="severity-grid" id="severity-grid"></div>
+                        </div>
+
+                        <div id="verify-panel"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="routine-tab" class="tab-pane" style="display:none;">
+            <div class="card routine-card">
+                <div class="card-header">
+                    <h2><i class="fa-solid fa-prescription-bottle-medical"></i> Dermatologist-Formulated Routine</h2>
+                    <p>Tailored AM/PM products matched with active ingredients for Melasma, Tanning & Skin Profile</p>
+                </div>
+
+                <div class="routine-content" id="routine-content">
+                    <div class="routine-columns">
+                        <div class="routine-column">
+                            <div class="routine-header am"><i class="fa-solid fa-sun"></i> Morning (AM) Routine</div>
+                            <div class="step-list" id="am-steps"></div>
+                        </div>
+
+                        <div class="routine-column">
+                            <div class="routine-header pm"><i class="fa-solid fa-moon"></i> Evening (PM) Routine</div>
+                            <div class="step-list" id="pm-steps"></div>
+                        </div>
+
+                        <div class="routine-column" id="weekly-column" style="display:none;">
+                            <div class="routine-header weekly"><i class="fa-solid fa-calendar-week"></i> Weekly</div>
+                            <div class="step-list" id="weekly-steps"></div>
+                        </div>
+                    </div>
+
+                    <div class="routine-notes" id="routine-notes" style="display:none;"></div>
+
+                    <div class="ingredients-summary">
+                        <h3><i class="fa-solid fa-vial"></i> Target Active Ingredients</h3>
+                        <div class="ingredient-tags" id="ingredient-tags"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="doctor-tab" class="tab-pane" style="display:none;">
+            <div class="card doctor-card">
+                <div class="card-header">
+                    <h2><i class="fa-solid fa-user-doctor"></i> Dermatologist & Hospital Referral Portal</h2>
+                    <p>Connect directly with board-certified clinical dermatologists for Melasma & High-Risk Skin Conditions</p>
+                </div>
+
+                <div class="doctors-grid" id="doctors-grid"></div>
+            </div>
+        </section>
+
+        <section id="patients-tab" class="tab-pane" style="display:none;">
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fa-solid fa-hospital-user"></i> Patients &amp; Scan Records</h2>
+                    <p>Stored locally on this computer (data/clarity.db). Click a patient to see their history.</p>
+                </div>
+                <div class="metrics-grid" id="clinic-stats"></div>
+                <div class="clinic-toolbar">
+                    <input class="clinic-input" id="patient-search" placeholder="Search by name, MRN, phone or email">
+                    <button class="btn btn-primary btn-small" data-open-patient-modal><i class="fa-solid fa-user-plus"></i> New patient</button>
+                </div>
+                <div class="table-wrap">
+                    <table class="clinic-table">
+                        <thead><tr><th>Patient</th><th>Sex</th><th>Date of birth</th><th>Scans</th><th>Last score</th><th>Last scan</th><th>Research consent</th></tr></thead>
+                        <tbody id="patients-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="patient-detail" class="card"></div>
+            </div>
+        </section>
+
+        <section id="metrics-tab" class="tab-pane" style="display:none;">
+            <div class="card metrics-card">
+                <div class="card-header">
+                    <h2><i class="fa-solid fa-hospital"></i> Hospital & Clinical Partner Deliverables</h2>
+                    <p>Validation statistics, DINOv2+LoRA architectural specs, and safety metrics for hospital review</p>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card-stat">
+                        <div class="stat-icon"><i class="fa-solid fa-bullseye"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="stat-accuracy">—</span>
+                            <span class="stat-lbl">Accuracy on never-seen faces</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card-stat">
+                        <div class="stat-icon"><i class="fa-solid fa-scale-balanced"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="stat-f1">—</span>
+                            <span class="stat-lbl">Macro F1 Score</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card-stat">
+                        <div class="stat-icon"><i class="fa-solid fa-shield-heart"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="stat-sensitivity">—</span>
+                            <span class="stat-lbl">Balanced accuracy</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card-stat">
+                        <div class="stat-icon"><i class="fa-solid fa-microchip"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="stat-params">—</span>
+                            <span class="stat-lbl">Severity MAE (0–5 scale)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="confusion-matrix-section">
+                    <h3><i class="fa-solid fa-table-cells"></i> Confusion Matrix on never-seen faces (rows = true, columns = predicted)</h3>
+                    <div class="cm-table-container" id="cm-table-container"></div>
+                </div>
+
+                <div class="honest-box">
+                    <div class="compliance-header"><i class="fa-solid fa-circle-info"></i> Evaluation protocol</div>
+                    <ul id="eval-notes">
+                        <li>Every number above is measured on held-out faces that never appeared in training (images grouped by source face).</li>
+                        <li>Severity error is measured against dermatologist 0–5 grades from the labelled subset.</li>
+                        <li>Research prototype — not a cleared medical device. Final decisions rest with the clinician.</li>
+                    </ul>
+                </div>
+
+                <div class="confusion-matrix-section">
+                    <h3><i class="fa-solid fa-graduation-cap"></i> Continuous learning</h3>
+                    <div id="learning-panel"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="modal" id="booking-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-video"></i> Schedule Tele-Dermatology Consultation</h3>
+                <button class="close-modal" id="close-modal-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="doc-summary-box" id="doc-summary-box"></div>
+
+                <form id="booking-form">
+                    <div class="form-group">
+                        <label>Patient Full Name</label>
+                        <input type="text" id="patient-name" required placeholder="Enter full name">
+                    </div>
+                    <div class="form-group">
+                        <label>Contact Phone / Email</label>
+                        <input type="text" id="patient-contact" required placeholder="Enter phone or email">
+                    </div>
+                    <div class="form-group">
+                        <label>DINOv2 Melasma & Biometrics Summary Attached</label>
+                        <input type="text" value="Auto-Attached: AI Melasma & Clinical Triage Report" readonly class="readonly-input">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-calendar-check"></i> Confirm Instant Referral Appointment</button>
+                </form>
+                <div id="booking-confirmation" style="display:none;" class="booking-confirm-box"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="patient-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-user-plus"></i> New patient</h3>
+                <button class="close-modal" id="close-patient-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="patient-form">
+                    <label class="full">Full name *<input name="full_name" required></label>
+                    <label>MRN / hospital ID<input name="mrn"></label>
+                    <label>Date of birth<input name="date_of_birth" type="date"></label>
+                    <label>Sex<select name="sex"><option value="">—</option><option>Female</option><option>Male</option><option>Other</option></select></label>
+                    <label>Phone<input name="phone"></label>
+                    <label class="full">Email<input name="email" type="email"></label>
+                    <label class="full">Notes<textarea name="notes" rows="2"></textarea></label>
+                    <label class="full check"><input type="checkbox" name="consent_research"> Patient consents to their de-identified scans being used to improve the AI model</label>
+                    <div id="patient-form-error"></div>
+                    <button type="submit" class="btn btn-primary full"><i class="fa-solid fa-floppy-disk"></i> Save patient</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/clinic.js"></script>
+</body>
+</html>
