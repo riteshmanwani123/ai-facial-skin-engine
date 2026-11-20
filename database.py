@@ -25,6 +25,7 @@ train_v2.py, continual_learning.py, backend/main.py — did not need to change.
 """
 import os
 import json
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
@@ -35,7 +36,11 @@ from psycopg.rows import dict_row
 
 import storage
 
-DB_DSN = os.environ.get("CLARITY_DATABASE_URL") or os.environ.get("DATABASE_URL") or "postgresql:///clarity"
+_raw_dsn = os.environ.get("CLARITY_DATABASE_URL") or os.environ.get("DATABASE_URL") or "postgresql:///clarity"
+if "@" in _raw_dsn and "?" not in _raw_dsn and "localhost" not in _raw_dsn and "127.0.0.1" not in _raw_dsn:
+    DB_DSN = _raw_dsn + "?sslmode=require"
+else:
+    DB_DSN = _raw_dsn
 # Anonymous scans (no patient attached) may be used for learning unless disabled
 LEARN_FROM_ANONYMOUS = os.environ.get("CLARITY_LEARN_ANONYMOUS", "1") == "1"
 
@@ -232,7 +237,24 @@ def now():
 
 @contextmanager
 def connect():
-    conn = psycopg.connect(DB_DSN, row_factory=dict_row, autocommit=False)
+    conn = None
+    last_err = None
+    for attempt in range(5):
+        try:
+            conn = psycopg.connect(DB_DSN, row_factory=dict_row, autocommit=False)
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 4:
+                time.sleep(2)
+    if conn is None:
+        if not os.environ.get("DATABASE_URL") and not os.environ.get("CLARITY_DATABASE_URL"):
+            print("\n" + "="*70)
+            print("[CRITICAL CONFIG ERROR] DATABASE_URL environment variable is missing on Render!")
+            print("Please add DATABASE_URL in your clarity-backend -> Environment settings on Render.")
+            print("="*70 + "\n")
+        raise last_err
+
     try:
         yield conn
         conn.commit()
@@ -242,12 +264,27 @@ def connect():
 
 def init_db():
     storage.ensure_dirs()
-    with connect() as c:
-        c.execute(SCHEMA)
-        # patients created before the sign-up questionnaire existed
-        c.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_json TEXT")
-        _init_identity(c)
-        _backfill_followups(c)
+    try:
+        with connect() as c:
+            c.execute(SCHEMA)
+            # patients created before the sign-up questionnaire existed
+            c.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_json TEXT")
+            _init_identity(c)
+            _backfill_followups(c)
+        print("[database] Database initialized successfully.")
+        return True
+    except Exception as e:
+        print(f"[database] Note: database initialization skipped or pending: {e}")
+        return False
+
+
+def is_healthy():
+    try:
+        with connect() as c:
+            c.execute("SELECT 1")
+            return True
+    except Exception:
+        return False
 
 
 # Every account gets a unique, human-readable ID by role (PT-000012 patient, DR-00003 doctor, AD-00001 admin) and every
@@ -787,4 +824,7 @@ def delete_user(uid):
         c.execute("DELETE FROM users WHERE id = %s", (uid,))
 
 
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"[database] Startup notice: {e}")

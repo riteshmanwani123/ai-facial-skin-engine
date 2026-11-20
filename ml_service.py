@@ -77,7 +77,11 @@ class MLService:
                   f"{ck['meta']['limitation']})")
 
     def load(self):
-        champ = db.get_champion()
+        champ = None
+        try:
+            champ = db.get_champion()
+        except Exception as e:
+            print(f"[ml_service] Note: database not yet reachable for champion check ({e})")
         with self.lock:
             if champ and champ["version"].startswith("2.") and os.path.exists(champ["path"]):
                 from model_v2 import load_checkpoint
@@ -88,9 +92,16 @@ class MLService:
                 if os.path.exists(V1_PATH):
                     m.load_state_dict(torch.load(V1_PATH, map_location="cpu"), strict=False)
                     if not champ:
-                        db.register_model("1.0", V1_PATH, notes="legacy v1 model (leaky evaluation)", make_champion=True)
+                        try:
+                            db.register_model("1.0", V1_PATH, notes="legacy v1 model (leaky evaluation)", make_champion=True)
+                        except Exception:
+                            pass
                 self.model, self.kind, self.version = m.to(self.device).eval(), "v1", "1.0"
-            n = self.memory.load_from_db(db, self.version)
+            n = 0
+            try:
+                n = self.memory.load_from_db(db, self.version)
+            except Exception:
+                pass
         print(f"[ml_service] model {self.version} ({self.kind}) on {self.device}; memory: {n} verified scans")
 
     @torch.no_grad()

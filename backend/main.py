@@ -53,10 +53,28 @@ LEARNING_ENABLED = os.environ.get("CLARITY_LEARNING", "0") == "1"
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CLARITY_CORS_ORIGINS", "http://localhost:3001,https://localhost:3001").split(",") if o.strip()]
 
 app = FastAPI(title="Clarity AI Face Engine API")
-app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 ml = MLService()
+
+
+@app.get("/")
+@app.get("/health")
+def health():
+    db_ok = db.is_healthy()
+    return {
+        "status": "healthy" if db_ok else "waiting_for_database",
+        "service": "Clarity AI Face Engine API",
+        "database": "connected" if db_ok else "unreachable_or_not_configured",
+        "model_version": getattr(ml, "version", "unknown"),
+    }
 
 
 def champion_watcher():
