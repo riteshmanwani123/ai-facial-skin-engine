@@ -124,7 +124,7 @@ export default function PatientPortal() {
           <div className="pending-box">
             <div className="spinner"></div>
             <p>This page updates automatically once your doctor completes the review.</p>
-            <p className="muted">Demo tip: open the <a href="/doctor" target="_blank">Doctor Portal</a> in another tab to complete this case.</p>
+            <p className="muted">Demo tip: To review and prescribe as the doctor, open an Incognito tab or click here to sign in as the doctor: <a href="/login?as=doctor" target="_blank">Doctor Portal (1-Click Login)</a>.</p>
           </div>
         </section>
 

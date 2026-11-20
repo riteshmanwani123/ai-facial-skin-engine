@@ -201,7 +201,19 @@
     // ------------------------------------------------------------- auth gate
     (async function init() {
         const user = await window.requireAuth('clinician');
-        if (!user) return; // requireAuth already redirected to /login
+        if (!user) {
+            const grid = document.getElementById('queue-grid');
+            if (grid) {
+                grid.innerHTML = `<div class="note-box" style="margin:20px;text-align:center;background:#fef2f2;border:1px solid #fecaca;padding:24px;border-radius:12px;">
+                    <h3 style="color:#991b1b;margin-bottom:8px;"><i class="fa-solid fa-user-doctor"></i> Doctor Login Required</h3>
+                    <p style="color:#7f1d1d;margin-bottom:16px;">You are currently signed in with a Patient account (or not signed in). Sign in as Doctor to review cases in the queue.</p>
+                    <a href="/login?as=doctor" class="btn btn-primary" style="display:inline-block;padding:10px 20px;font-weight:600;text-decoration:none;">
+                        Sign In as Doctor (Dr. Tanya Unni)
+                    </a>
+                </div>`;
+            }
+            return;
+        }
         const bar = document.getElementById('session-bar');
         if (bar) bar.innerHTML = `${esc(user.full_name)} · ID ${esc(user.user_code || '')} · <a href="#" id="logout-link">Sign out</a>`;
         document.getElementById('logout-link')?.addEventListener('click', e => { e.preventDefault(); window.clarityLogout(); });
