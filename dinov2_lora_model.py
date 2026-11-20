@@ -40,7 +40,7 @@ class DINOv2SkinAnalyzer(nn.Module):
         lora_config = LoraConfig(
             r=r,
             lora_alpha=lora_alpha,
-            target_modules=["query", "value"],
+            target_modules=["query", "key", "value", "dense"],
             lora_dropout=dropout,
             bias="none",
         )

@@ -271,6 +271,16 @@ def init_db():
             c.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_json TEXT")
             _init_identity(c)
             _backfill_followups(c)
+            # Ensure production champion model is registered
+            v2_path = os.path.join(storage.ROOT, "models", "clarity_v2.1.pt")
+            if os.path.exists(v2_path):
+                has_champ = c.execute("SELECT version FROM model_versions WHERE is_champion = 1").fetchone()
+                if not has_champ:
+                    c.execute(
+                        "INSERT INTO model_versions(version, path, created_at, is_champion, notes) "
+                        "VALUES ('2.1', 'models/clarity_v2.1.pt', %s, 1, 'Production v2.1 champion') "
+                        "ON CONFLICT (version) DO UPDATE SET is_champion = 1", (now(),)
+                    )
         print("[database] Database initialized successfully.")
         return True
     except Exception as e:

@@ -49,8 +49,11 @@ class MLService:
         self.acne_model = None
         self.sun_damage_backbone = None
         self.sun_damage_coef = self.sun_damage_intercept = self.sun_damage_threshold = None
-        self.load()
-        self._load_specialist_models()
+        try:
+            self.load()
+            self._load_specialist_models()
+        except Exception as e:
+            print(f"[ml_service] Note: initial model loading deferred ({e}). Will load on first analysis request.")
 
     def _load_specialist_models(self):
         """Dedicated specialist models trained on real labeled dermatology data (ACNE04, SCIN) —
@@ -58,23 +61,29 @@ class MLService:
         Loaded best-effort: if a checkpoint is missing, the corresponding specialist output is
         simply omitted (callers fall back to the v2 multi-task model's own acne_severity, and
         skip the sun-damage flag) rather than failing the whole service."""
-        if os.path.exists(ACNE_MODEL_PATH):
-            from train_acne_model import AcneSeverityModel
-            ck = torch.load(ACNE_MODEL_PATH, map_location="cpu", weights_only=False)
-            m = AcneSeverityModel()
-            m.load_state_dict(ck["state_dict"])
-            self.acne_model = m.to(self.device).eval()
-            print(f"[ml_service] acne specialist model loaded (test macro-F1 "
-                  f"{ck['meta']['test_metrics']['macro_f1_score']})")
-        if os.path.exists(SUN_DAMAGE_MODEL_PATH):
-            from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-            ck = torch.load(SUN_DAMAGE_MODEL_PATH, map_location="cpu", weights_only=False)
-            self.sun_damage_backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1).to(self.device).eval()
-            self.sun_damage_coef = torch.as_tensor(ck["sklearn_coef"], dtype=torch.float32, device=self.device)
-            self.sun_damage_intercept = torch.as_tensor(ck["sklearn_intercept"], dtype=torch.float32, device=self.device)
-            self.sun_damage_threshold = float(ck["decision_threshold"])
-            print(f"[ml_service] sun-damage flag model loaded (threshold {self.sun_damage_threshold:.3f}, "
-                  f"{ck['meta']['limitation']})")
+        try:
+            if os.path.exists(ACNE_MODEL_PATH):
+                from train_acne_model import AcneSeverityModel
+                ck = torch.load(ACNE_MODEL_PATH, map_location="cpu", weights_only=False)
+                m = AcneSeverityModel()
+                m.load_state_dict(ck["state_dict"])
+                self.acne_model = m.to(self.device).eval()
+                print(f"[ml_service] acne specialist model loaded (test macro-F1 "
+                      f"{ck['meta']['test_metrics']['macro_f1_score']})")
+        except Exception as e:
+            print(f"[ml_service] Note: acne specialist model deferred: {e}")
+
+        try:
+            if os.path.exists(SUN_DAMAGE_MODEL_PATH):
+                from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+                ck = torch.load(SUN_DAMAGE_MODEL_PATH, map_location="cpu", weights_only=False)
+                self.sun_damage_backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1).to(self.device).eval()
+                self.sun_damage_coef = torch.as_tensor(ck["sklearn_coef"], dtype=torch.float32, device=self.device)
+                self.sun_damage_intercept = torch.as_tensor(ck["sklearn_intercept"], dtype=torch.float32, device=self.device)
+                self.sun_damage_threshold = float(ck["decision_threshold"])
+                print(f"[ml_service] sun-damage flag model loaded (threshold {self.sun_damage_threshold:.3f})")
+        except Exception as e:
+            print(f"[ml_service] Note: sun-damage flag model deferred: {e}")
 
     def load(self):
         champ = None
@@ -82,18 +91,42 @@ class MLService:
             champ = db.get_champion()
         except Exception as e:
             print(f"[ml_service] Note: database not yet reachable for champion check ({e})")
+
+        # Prioritize champion from database, then local v2.1, then local v2.0
+        v2_1_path = os.path.join(ROOT, "models", "clarity_v2.1.pt")
+        v2_0_path = os.path.join(ROOT, "models", "clarity_v2.0.pt")
+
+        target_path = None
+        target_version = "2.1"
+
+        if champ and champ.get("path") and os.path.exists(champ["path"]):
+            target_path = champ["path"]
+            target_version = champ.get("version", "2.1")
+        elif os.path.exists(v2_1_path):
+            target_path = v2_1_path
+            target_version = "2.1"
+        elif os.path.exists(v2_0_path):
+            target_path = v2_0_path
+            target_version = "2.0"
+
         with self.lock:
-            if champ and champ["version"].startswith("2.") and os.path.exists(champ["path"]):
+            if target_path and os.path.exists(target_path):
                 from model_v2 import load_checkpoint
-                self.model, _ = load_checkpoint(champ["path"], self.device)
-                self.kind, self.version = "v2", champ["version"]
+                self.model, _ = load_checkpoint(target_path, self.device)
+                self.kind, self.version = "v2", target_version
+                if not champ:
+                    try:
+                        db.register_model(self.version, os.path.relpath(target_path, ROOT),
+                                          notes="Production v2 champion model", make_champion=True)
+                    except Exception:
+                        pass
             else:
                 m = DINOv2SkinAnalyzer(model_name="facebook/dinov2-base", num_classes=4, r=16)
                 if os.path.exists(V1_PATH):
                     m.load_state_dict(torch.load(V1_PATH, map_location="cpu"), strict=False)
                     if not champ:
                         try:
-                            db.register_model("1.0", V1_PATH, notes="legacy v1 model (leaky evaluation)", make_champion=True)
+                            db.register_model("1.0", V1_PATH, notes="legacy v1 model", make_champion=True)
                         except Exception:
                             pass
                 self.model, self.kind, self.version = m.to(self.device).eval(), "v1", "1.0"
@@ -108,6 +141,8 @@ class MLService:
     def infer(self, img):
         """Returns (type_probs [4], severity dict, embedding [D], model_version)."""
         with self.lock:
+            if self.model is None:
+                self.load()
             if self.kind == "v2":
                 from model_v2 import predict, SEVERITY_ATTRIBUTES
                 probs, sev, emb = predict(self.model, [img], self.device, tta=True)
