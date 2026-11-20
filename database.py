@@ -271,6 +271,7 @@ def init_db():
             c.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_json TEXT")
             _init_identity(c)
             _backfill_followups(c)
+            _seed_demo_users(c)
             # Ensure production champion model is registered
             v2_path = os.path.join(storage.ROOT, "models", "clarity_v2.1.pt")
             if os.path.exists(v2_path):
@@ -323,6 +324,43 @@ def _backfill_followups(c):
                        " AND id NOT IN (SELECT consultation_id FROM followups)").fetchall():
         c.execute("INSERT INTO followups(id, consultation_id, day, scan_id, created_at) VALUES (%s,%s,15,%s,%s) ON CONFLICT DO NOTHING",
                   (str(uuid.uuid4()), r["id"], r["followup_scan_id"], now()))
+
+
+def _seed_demo_users(c):
+    """Ensure default demo accounts exist for immediate 1-click evaluation."""
+    import auth
+    demos = [
+        ("admin@clarity.local", "Admin12345", "System Administrator", "admin"),
+        ("doctor@clarity.local", "Doctor12345", "Dr. Tanya Unni", "clinician"),
+    ]
+    for email, pwd, name, role in demos:
+        existing = c.execute("SELECT id FROM users WHERE email = %s", (email,)).fetchone()
+        if not existing:
+            uid = str(uuid.uuid4())
+            c.execute(
+                "INSERT INTO users(id, email, password_hash, full_name, role, patient_id, created_at, user_code) "
+                "VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)",
+                (uid, email, auth.hash_password(pwd), name, role, now(), _next_user_code(c, role))
+            )
+            audit("seed", "user", uid, actor="system", details={"role": role}, conn=c)
+
+    p_email = "amantadikademo@gmail.com"
+    existing_p = c.execute("SELECT id FROM users WHERE email = %s", (p_email,)).fetchone()
+    if not existing_p:
+        pid = str(uuid.uuid4())
+        mrn = _next_mrn(c)
+        c.execute(
+            "INSERT INTO patients(id, mrn, full_name, email, consent_research, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, 1, %s, %s)",
+            (pid, mrn, "Aman Tadika", p_email, now(), now())
+        )
+        uid = str(uuid.uuid4())
+        c.execute(
+            "INSERT INTO users(id, email, password_hash, full_name, role, patient_id, created_at, user_code) "
+            "VALUES (%s, %s, %s, %s, 'patient', %s, %s, %s)",
+            (uid, p_email, auth.hash_password("12345678"), "Aman Tadika", pid, now(), _next_user_code(c, "patient"))
+        )
+        audit("seed", "patient_user", uid, actor="system", details={"patient_id": pid}, conn=c)
 
 
 def _next_user_code(c, role):
