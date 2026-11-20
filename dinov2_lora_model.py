@@ -37,14 +37,24 @@ class DINOv2SkinAnalyzer(nn.Module):
         
         self.dinov2 = AutoModel.from_pretrained(model_name)
         
-        lora_config = LoraConfig(
-            r=r,
-            lora_alpha=lora_alpha,
-            target_modules=["query", "key", "value", "dense"],
-            lora_dropout=dropout,
-            bias="none",
-        )
-        self.dinov2 = get_peft_model(self.dinov2, lora_config)
+        try:
+            lora_config = LoraConfig(
+                r=r,
+                lora_alpha=lora_alpha,
+                target_modules=r".*(query|key|value|dense)",
+                lora_dropout=dropout,
+                bias="none",
+            )
+            self.dinov2 = get_peft_model(self.dinov2, lora_config)
+        except Exception:
+            lora_config = LoraConfig(
+                r=r,
+                lora_alpha=lora_alpha,
+                target_modules=["query", "key", "value", "dense"],
+                lora_dropout=dropout,
+                bias="none",
+            )
+            self.dinov2 = get_peft_model(self.dinov2, lora_config)
         
         hidden_size = self.dinov2.config.hidden_size
         

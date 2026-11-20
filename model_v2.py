@@ -68,9 +68,14 @@ class SkinAnalyzerV2(nn.Module):
         self.config = dict(backbone=backbone, lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
                            lora_targets=list(lora_targets), head_dropout=head_dropout, n_types=n_types, n_sev=n_sev)
         base = AutoModel.from_pretrained(backbone)
-        self.backbone = get_peft_model(base, LoraConfig(
-            r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
-            target_modules=list(lora_targets), bias="none"))
+        try:
+            self.backbone = get_peft_model(base, LoraConfig(
+                r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+                target_modules=r".*(query|key|value|dense)", bias="none"))
+        except Exception:
+            self.backbone = get_peft_model(base, LoraConfig(
+                r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+                target_modules=list(lora_targets), bias="none"))
         hid = base.config.hidden_size
         self.embed_dim = hid * 2
         self.norm = nn.LayerNorm(self.embed_dim)
