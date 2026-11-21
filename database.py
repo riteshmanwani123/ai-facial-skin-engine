@@ -382,6 +382,7 @@ def _row(r):
         return None
     d = dict(r)
     d.pop("embedding", None)
+    d.pop("image_bytes", None)
     for k in list(d):
         if k.endswith("_json") and d[k]:
             d[k[:-5]] = json.loads(d.pop(k))

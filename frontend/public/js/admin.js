@@ -3,7 +3,13 @@
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmtDate = iso => iso ? new Date(iso).toLocaleString() : '—';
     const api = (url, opts = {}) => fetch(url, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...opts })
-        .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.detail || r.statusText); return d; });
+        .then(async r => {
+            let d = {};
+            const text = await r.text();
+            try { d = JSON.parse(text); } catch (_) { d = { detail: text || r.statusText }; }
+            if (!r.ok) throw new Error(d.error || d.detail || d.message || `Request failed (${r.status})`);
+            return d;
+        });
 
     function loadClinicians() {
         api('/api/admin/clinicians').then(d => {

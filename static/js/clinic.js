@@ -12,7 +12,13 @@
     };
     const api = (url, opts = {}) => fetch(url, {
         headers: { 'Content-Type': 'application/json', 'X-Clinician': clinician() }, ...opts
-    }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || r.statusText); return d; });
+    }).then(async r => {
+        let d = {};
+        const text = await r.text();
+        try { d = JSON.parse(text); } catch (_) { d = { detail: text || r.statusText }; }
+        if (!r.ok) throw new Error(d.error || d.detail || d.message || `Request failed (${r.status})`);
+        return d;
+    });
     const clinician = () => (document.getElementById('clinician-name')?.value || store.get('clarity_clinician') || 'clinician');
 
     // ------------------------------------------------ patient selector (scan tab)

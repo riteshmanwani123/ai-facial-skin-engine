@@ -5,7 +5,13 @@
     const nice = s => String(s).replaceAll('_', ' ').replace(/^\w/, c => c.toUpperCase());
     const fmtDate = iso => iso ? new Date(iso).toLocaleString() : '—';
     const api = (url, opts = {}) => fetch(url, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...opts })
-        .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.detail || r.statusText); return d; });
+        .then(async r => {
+            let d = {};
+            const text = await r.text();
+            try { d = JSON.parse(text); } catch (_) { d = { detail: text || r.statusText }; }
+            if (!r.ok) throw new Error(d.error || d.detail || d.message || `Request failed (${r.status})`);
+            return d;
+        });
 
     const state = {
         patientId: null, patientName: '',
@@ -603,8 +609,16 @@
         if (!slot) { if (err) err.textContent = 'Please choose an appointment time first.'; return; }
         payBtn.disabled = true; if (err) err.textContent = '';
         api(`/api/consultations/${state.consultationId}/pay`, { method: 'POST', body: JSON.stringify({ slot_start: slot.start }) })
-            .then(() => { showStep('pending'); pollConsultation(); })
+            .then(data => {
+                showStep('pending');
+                apptSig = '';
+                if (data && data.appointment) {
+                    renderAppointment(data);
+                }
+                pollConsultation();
+            })
             .catch(e => {
+                payBtn.disabled = false;
                 if (err) err.textContent = e.message;
                 if (payScheduler) { payScheduler.clear(); payScheduler.reload(); }    // refresh: the slot was probably just taken
             });
@@ -625,16 +639,23 @@
             document.getElementById('appt-book').onclick = () => openResched(con, 'Book a time');
             return;
         }
-        apptBox.innerHTML = `<div class="panel tinted"><h3>Your appointment</h3>
-            <div class="kv"><span>Date</span><span>${esc(a.day_label)}</span></div>
-            <div class="kv"><span>Time</span><span>${esc(a.time_label)}</span></div>
-            <div class="kv"><span>Doctor</span><span>${esc(a.doctor_name || 'Dermatologist')}</span></div>
-            <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
-                <button type="button" class="btn btn-secondary btn-small" id="appt-resched" ${a.can_change ? '' : 'disabled'}>Reschedule</button>
-                <button type="button" class="btn btn-secondary btn-small" id="appt-cancel" ${a.can_change ? '' : 'disabled'}>Cancel appointment</button>
-            </div>
-            ${a.can_change ? '' : '<p class="muted" style="margin-top:10px;">Changes are closed within 2 hours of the start. Please contact the clinic.</p>'}
-            <div id="appt-err" class="form-error" style="margin-top:8px;"></div></div>`;
+        apptBox.innerHTML = `
+            <div class="panel tinted" style="border-left: 4px solid var(--accent-cyan, #00d2ff); background: rgba(0, 210, 255, 0.04);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                    <h3 style="margin:0; color:var(--accent-cyan, #00d2ff);"><i class="fa-solid fa-circle-check"></i> Appointment Confirmed</h3>
+                    <span class="pill ok" style="font-weight:600;"><i class="fa-solid fa-calendar-check"></i> Booked</span>
+                </div>
+                <div class="kv"><span>Date</span><strong>${esc(a.day_label)}</strong></div>
+                <div class="kv"><span>Time</span><strong>${esc(a.time_label)}</strong></div>
+                <div class="kv"><span>Doctor</span><strong>${esc(a.doctor_name || 'Dr. Tanya Unni')}</strong></div>
+                <div class="kv"><span>Consultation Fee</span><span class="pill">$99.00 (Paid)</span></div>
+                <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+                    <button type="button" class="btn btn-secondary btn-small" id="appt-resched" ${a.can_change ? '' : 'disabled'}><i class="fa-solid fa-clock-rotate-left"></i> Reschedule</button>
+                    <button type="button" class="btn btn-secondary btn-small" id="appt-cancel" ${a.can_change ? '' : 'disabled'}><i class="fa-solid fa-xmark"></i> Cancel appointment</button>
+                </div>
+                ${a.can_change ? '' : '<p class="muted" style="margin-top:10px;">Changes are closed within 2 hours of the start. Please contact the clinic.</p>'}
+                <div id="appt-err" class="form-error" style="margin-top:8px;"></div>
+            </div>`;
         document.getElementById('appt-resched').onclick = () => openResched(con, 'Reschedule');
         document.getElementById('appt-cancel').onclick = () => {
             if (!confirm('Cancel this appointment? You can book another time afterwards.')) return;

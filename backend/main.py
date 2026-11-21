@@ -731,15 +731,23 @@ def consultation_detail(cid: str, request: Request):
         raise HTTPException(404, "not found")
     if u["role"] == "patient" and con["patient_id"] != u["patient_id"]:
         raise HTTPException(403, "This consultation belongs to a different patient account")
-    con["scan"] = db.get_scan(con["scan_id"])
+    scan = db.get_scan(con["scan_id"])
+    if scan:
+        scan.pop("image_bytes", None)
+        scan.pop("embedding", None)
+    con["scan"] = scan
     con["appointment"] = scheduling.for_consultation(cid)
     if con["status"] == "completed":
         con["checkpoints"] = _checkpoints_with_comparisons(con)
     if con["followup_scan_id"]:
         followup = db.get_scan(con["followup_scan_id"])
+        if followup:
+            followup.pop("image_bytes", None)
+            followup.pop("embedding", None)
         con["followup_scan"] = followup
-        con["comparison"] = compare_scans(con["scan"], {"overall_health_score": followup.get("overall_score"),
-                                                        "severity_scores": followup.get("severity") or {}})
+        if scan and followup:
+            con["comparison"] = compare_scans(scan, {"overall_health_score": followup.get("overall_score"),
+                                                    "severity_scores": followup.get("severity") or {}})
     return con
 
 
