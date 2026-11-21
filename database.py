@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS scans (
     cv_metrics_json    TEXT,
     routine_json       TEXT,
     embedding          BYTEA,
-    embedding_version  TEXT
+    embedding_version  TEXT,
+    image_bytes        BYTEA
 );
 CREATE INDEX IF NOT EXISTS idx_scans_patient ON scans(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_scans_sha ON scans(image_sha256);
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS scan_views (
     image_sha256   TEXT NOT NULL,
     redaction_json TEXT,
     created_at     TEXT NOT NULL,
+    image_bytes    BYTEA,
     UNIQUE (scan_id, view)
 );
 
@@ -269,6 +271,9 @@ def init_db():
             c.execute(SCHEMA)
             # patients created before the sign-up questionnaire existed
             c.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_json TEXT")
+            # persistent image storage across container restarts
+            c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS image_bytes BYTEA")
+            c.execute("ALTER TABLE scan_views ADD COLUMN IF NOT EXISTS image_bytes BYTEA")
             _init_identity(c)
             _backfill_followups(c)
             _seed_demo_users(c)
@@ -492,21 +497,21 @@ def delete_patient(pid, actor="system", delete_images=True):
 # -------------------------------------------------------------------- scans
 def save_scan(pil_image, result, patient_id=None, model_version=None, embedding=None,
               embedding_version=None, actor="system"):
-    """Stores the image via storage.py and the full analysis result in the DB. Returns scan id."""
+    """Stores the image via storage.py and the full analysis result in the DB (including persistent image bytes). Returns scan id."""
     sid = str(uuid.uuid4())
-    rel_path, sha = storage.save_image(pil_image, patient_id, sid)
+    rel_path, sha, raw = storage.save_image(pil_image, patient_id, sid)
     emb = None if embedding is None else np.asarray(embedding, np.float32).tobytes()
     with connect() as c:
         c.execute(
             "INSERT INTO scans(id, patient_id, image_path, image_sha256, captured_at, model_version, skin_type_pred,"
             " skin_type_conf, probs_json, severity_json, overall_score, triage_status, image_quality, cv_metrics_json,"
-            " routine_json, embedding, embedding_version) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " routine_json, embedding, embedding_version, image_bytes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (sid, patient_id, rel_path, sha, now(), model_version, result.get("skin_type"),
              result.get("skin_type_confidence"), json.dumps(result.get("skin_type_probabilities")),
              json.dumps(result.get("severity_scores")), result.get("overall_health_score"),
              (result.get("triage") or {}).get("status"),
              ((result.get("cv_metrics") or {}).get("image_quality") or {}).get("overall_quality"),
-             json.dumps(result.get("cv_metrics")), json.dumps(result.get("routine")), emb, embedding_version))
+             json.dumps(result.get("cv_metrics")), json.dumps(result.get("routine")), emb, embedding_version, raw))
         audit("create", "scan", sid, actor, {"patient_id": patient_id}, conn=c)
     return sid
 
@@ -524,6 +529,15 @@ def scan_image_path(sid):
     with connect() as c:
         r = c.execute("SELECT image_path FROM scans WHERE id = %s", (sid,)).fetchone()
     return storage.abs_path(r["image_path"]) if r else None
+
+
+def get_scan_image_bytes(sid):
+    with connect() as c:
+        r = c.execute("SELECT image_bytes FROM scans WHERE id = %s", (sid,)).fetchone()
+    if r and r.get("image_bytes") is not None:
+        raw = r["image_bytes"]
+        return bytes(raw) if not isinstance(raw, bytes) else raw
+    return None
 
 
 def list_scans(patient_id=None, limit=100):
@@ -554,22 +568,24 @@ VIEW_KEYS = ("front", "left", "right", "up", "down")
 def register_front_view(scan_id, redaction=None):
     """The front view is the image already saved for the scan; record it in scan_views without a second file."""
     with connect() as c:
-        s = c.execute("SELECT image_path, image_sha256 FROM scans WHERE id = %s", (scan_id,)).fetchone()
-        c.execute("INSERT INTO scan_views(scan_id, view, image_path, image_sha256, redaction_json, created_at)"
-                  " VALUES (%s,'front',%s,%s,%s,%s) ON CONFLICT (scan_id, view) DO NOTHING",
-                  (scan_id, s["image_path"], s["image_sha256"], json.dumps(redaction) if redaction else None, now()))
+        s = c.execute("SELECT image_path, image_sha256, image_bytes FROM scans WHERE id = %s", (scan_id,)).fetchone()
+        if s:
+            c.execute("INSERT INTO scan_views(scan_id, view, image_path, image_sha256, redaction_json, created_at, image_bytes)"
+                      " VALUES (%s,'front',%s,%s,%s,%s,%s) ON CONFLICT (scan_id, view) DO UPDATE SET"
+                      " image_bytes=COALESCE(EXCLUDED.image_bytes, scan_views.image_bytes)",
+                      (scan_id, s["image_path"], s["image_sha256"], json.dumps(redaction) if redaction else None, now(), s.get("image_bytes")))
 
 
 def save_scan_view(scan_id, patient_id, view, pil_image, redaction=None):
     """Stores one extra (already eye-covered) angle for a scan. Returns the relative image path."""
     if view not in VIEW_KEYS or view == "front":
         raise ValueError(f"view must be one of {VIEW_KEYS[1:]}")
-    rel_path, sha = storage.save_image(pil_image, patient_id, f"{scan_id}_{view}")
+    rel_path, sha, raw = storage.save_image(pil_image, patient_id, f"{scan_id}_{view}")
     with connect() as c:
-        c.execute("INSERT INTO scan_views(scan_id, view, image_path, image_sha256, redaction_json, created_at)"
-                  " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (scan_id, view) DO UPDATE SET image_path=EXCLUDED.image_path,"
-                  " image_sha256=EXCLUDED.image_sha256, redaction_json=EXCLUDED.redaction_json",
-                  (scan_id, view, rel_path, sha, json.dumps(redaction) if redaction else None, now()))
+        c.execute("INSERT INTO scan_views(scan_id, view, image_path, image_sha256, redaction_json, created_at, image_bytes)"
+                  " VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (scan_id, view) DO UPDATE SET image_path=EXCLUDED.image_path,"
+                  " image_sha256=EXCLUDED.image_sha256, redaction_json=EXCLUDED.redaction_json, image_bytes=EXCLUDED.image_bytes",
+                  (scan_id, view, rel_path, sha, json.dumps(redaction) if redaction else None, now(), raw))
     return rel_path
 
 
@@ -593,6 +609,17 @@ def scan_view_image_path(scan_id, view):
     with connect() as c:
         r = c.execute("SELECT image_path FROM scan_views WHERE scan_id = %s AND view = %s", (scan_id, view)).fetchone()
     return storage.abs_path(r["image_path"]) if r else None
+
+
+def get_scan_view_image_bytes(scan_id, view):
+    with connect() as c:
+        r = c.execute("SELECT image_bytes FROM scan_views WHERE scan_id = %s AND view = %s", (scan_id, view)).fetchone()
+    if r and r.get("image_bytes") is not None:
+        raw = r["image_bytes"]
+        return bytes(raw) if not isinstance(raw, bytes) else raw
+    if view == "front":
+        return get_scan_image_bytes(scan_id)
+    return None
 
 
 # -------------------------------------------------------------- annotations

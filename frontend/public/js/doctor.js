@@ -61,7 +61,7 @@
     function queueCard(c) {
         const p = c.patient || {};
         return `<div class="queue-card">
-            <img class="qc-thumb" loading="lazy" src="/api/scans/${esc(c.scan_id)}/image" alt="">
+            <img class="qc-thumb" loading="lazy" src="/api/scans/${esc(c.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
             <div class="qc-head"><span class="qc-name">${esc(p.full_name || 'Unknown')}</span><span class="pill">$${c.fee_usd}</span></div>
             <div class="qc-meta">${apptChip(c.appointment)}</div>
             <div class="qc-meta">${esc([p.age && p.age + ' yrs', p.sex, 'Submitted ' + fmtDate(c.created_at)].filter(Boolean).join(' · '))}</div>
@@ -121,7 +121,7 @@
             const concerns = concernList(scan.severity);
             document.getElementById('case-summary').innerHTML = `
                 <div class="report-score-row">
-                    <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" alt="">
+                    <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
                     <div>
                         <div style="font-weight:700; font-size:16px;">${esc(p.full_name || '')} — ${esc(p.age || '?')} yrs, ${esc(p.sex || 'unspecified')}${p.mrn ? ` <span class="tag">${esc(p.mrn)}</span>` : ''}</div>
                         <div class="muted">AI: ${esc(scan.skin_type_pred)} (${Math.round((scan.skin_type_conf || 0) * 100)}%) · score ${scan.overall_score}/100 · triage ${esc(scan.triage_status || '')}</div>
@@ -165,7 +165,7 @@
             if (!box || !d.views || d.views.length < 2) return; // single-photo (older) scans keep the original look
             box.innerHTML = `<h3 style="font-size:13px; margin:16px 0 4px;"><i class="fa-solid fa-camera"></i> Captured angles <span class="muted" style="font-weight:400;">(patient's eyes covered before storage — click to enlarge)</span></h3>
                 <div class="views-gallery">${d.views.map(v => `<a href="${esc(v.url)}" target="_blank" rel="noopener">
-                    <img src="${esc(v.url)}" alt="${esc(VIEW_LABELS[v.view] || v.view)}" loading="lazy"><span>${esc(VIEW_LABELS[v.view] || v.view)}</span></a>`).join('')}</div>`;
+                    <img src="${esc(v.url)}" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="${esc(VIEW_LABELS[v.view] || v.view)}" loading="lazy"><span>${esc(VIEW_LABELS[v.view] || v.view)}</span></a>`).join('')}</div>`;
         }).catch(() => { });
     }
 

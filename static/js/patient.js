@@ -134,6 +134,39 @@
     els.start.addEventListener('click', async () => {
         els.err.textContent = '';
         els.start.disabled = true; setStatus('Loading eye-privacy protection…', 'warn');
+
+        // Check for Secure Context (HTTPS or localhost)
+        const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if (!isSecure || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            const isLocalIp = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+            if (isLocalIp) {
+                els.err.innerHTML = `
+                    <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 8px; padding: 14px; margin-top: 10px; text-align: left; line-height: 1.5;">
+                        <strong style="color: #f87171; font-size: 14px;">⚠️ Camera Blocked: Browsers require HTTPS or localhost</strong>
+                        <p style="margin: 6px 0 10px; font-size: 13px; color: var(--text-primary, #f1f5f9);">
+                            Modern browsers (Safari, Chrome, Brave) disable webcam access over unencrypted HTTP on IP addresses (<code>${location.hostname}</code>) to protect user privacy.
+                        </p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="http://localhost:3001/patient" class="btn btn-primary btn-small" style="text-decoration: none; padding: 8px 12px; font-weight: 600;">
+                                🚀 Open on localhost:3001 (Enables Camera)
+                            </a>
+                            <a href="https://${location.hostname}:3001/patient" class="btn btn-secondary btn-small" style="text-decoration: none; padding: 8px 12px;">
+                                🔒 Open via HTTPS
+                            </a>
+                        </div>
+                        <p style="margin: 10px 0 0; font-size: 12px; color: var(--text-secondary, #94a3b8);">
+                            Or click &ldquo;Upload a photo for this angle&rdquo; below to test without camera.
+                        </p>
+                    </div>
+                `;
+            } else {
+                els.err.textContent = 'Camera is unavailable in this browser context. Please use Chrome, Safari, or Brave on a secure connection.';
+            }
+            els.start.disabled = false;
+            setStatus('Camera is off', 'bad');
+            return;
+        }
+
         try {
             await window.EyeSafeCapture.preload();
         } catch (e) {
@@ -141,15 +174,39 @@
             els.err.textContent = 'Eye-privacy protection could not load, so the camera is disabled. Please refresh the page and try again.';
             els.start.disabled = false; setStatus('Camera is off', 'bad'); return;
         }
+
+        let stream;
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } } });
+            // Primary attempt: standard selfie camera constraints
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }
+            });
+        } catch (mediaErr) {
+            // Secondary attempt: fallback to generic video if overconstrained
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            } catch (fallbackErr) {
+                let helpfulMsg = 'Camera unavailable (' + fallbackErr.message + ').';
+                if (fallbackErr.name === 'NotAllowedError' || fallbackErr.name === 'PermissionDeniedError') {
+                    helpfulMsg = 'Camera permission was denied. Please allow camera access in your browser settings (look for the camera icon in the URL bar) and in macOS System Settings > Privacy & Security > Camera.';
+                } else if (fallbackErr.name === 'NotReadableError' || fallbackErr.name === 'TrackStartError') {
+                    helpfulMsg = 'Camera is currently in use by another application or tab (e.g. Google Meet, Zoom, FaceTime). Please close other camera apps and click "Turn on camera" again.';
+                }
+                els.err.textContent = helpfulMsg + ' You can also upload a photo for each angle below.';
+                els.start.disabled = false;
+                setStatus('Camera is off', 'bad');
+                return;
+            }
+        }
+
+        try {
             session = new window.EyeSafeCapture.LiveSession(els.video, els.live, onLiveUpdate, onAutoShot);
             session.setTarget(state.current);
             await session.start(stream);
             els.start.style.display = 'none';
             setCurrent(state.current);
         } catch (err) {
-            els.err.textContent = 'Camera unavailable (' + err.message + '). You can upload a photo for each angle below instead.';
+            els.err.textContent = 'Camera session failed (' + err.message + '). You can upload a photo for each angle below instead.';
             els.start.disabled = false; setStatus('Camera is off', 'bad');
         }
     });
@@ -237,30 +294,222 @@
             <div class="muted">Overall skin health index</div></div>`;
     }
 
+    const BIOMETRIC_CATEGORIES = [
+        {
+            title: 'Acne & Blemishes',
+            icon: 'fa-solid fa-virus-covid',
+            keys: ['acne_severity', 'blackheads', 'whiteheads', 'post_acne_marks'],
+            labels: {
+                acne_severity: 'Acne Severity',
+                blackheads: 'Blackheads',
+                whiteheads: 'Whiteheads',
+                post_acne_marks: 'Post-Acne Marks',
+            }
+        },
+        {
+            title: 'Pores, Oiliness & Texture',
+            icon: 'fa-solid fa-droplet',
+            keys: ['excessive_oil', 'open_pores', 'texture_roughness', 'dehydration'],
+            labels: {
+                excessive_oil: 'Excessive Oiliness',
+                open_pores: 'Open Pores',
+                texture_roughness: 'Skin Texture Roughness',
+                dehydration: 'Skin Dehydration',
+            }
+        },
+        {
+            title: 'Skin Barrier & Sensitivity',
+            icon: 'fa-solid fa-shield-heart',
+            keys: ['redness_severity', 'skin_irritation', 'skin_sensitivity'],
+            labels: {
+                redness_severity: 'Redness / Erythema',
+                skin_irritation: 'Skin Irritation',
+                skin_sensitivity: 'Skin Sensitivity',
+            }
+        },
+        {
+            title: 'Tone, Melasma & Sun Damage',
+            icon: 'fa-solid fa-sun',
+            keys: ['pigmentation_melasma', 'freckles', 'tanning_severity'],
+            labels: {
+                pigmentation_melasma: 'Pigmentation / Melasma',
+                freckles: 'Freckles',
+                tanning_severity: 'Sun Tanning & UV Impact',
+            }
+        },
+        {
+            title: 'Aging, Lines & Elasticity',
+            icon: 'fa-solid fa-clock',
+            keys: ['fine_lines_eyes', 'eye_puffiness', 'dark_circles', 'wrinkles', 'skin_elasticity'],
+            labels: {
+                fine_lines_eyes: 'Fine Lines (Eye Area)',
+                eye_puffiness: 'Under-Eye Puffiness',
+                dark_circles: 'Dark Circles',
+                wrinkles: 'Facial Wrinkles',
+                skin_elasticity: 'Loss of Elasticity',
+            }
+        }
+    ];
+
+    function getBiometricStatus(val) {
+        if (val < 1.5) return { label: 'Optimal', cls: 'optimal', desc: 'Healthy baseline' };
+        if (val < 2.5) return { label: 'Mild', cls: 'mild', desc: 'Mild target area' };
+        if (val < 3.5) return { label: 'Moderate', cls: 'moderate', desc: 'Moderate concern' };
+        return { label: 'High', cls: 'high', desc: 'Clinical priority' };
+    }
+
+    function renderBiometricsHtml(scores, activeFilter) {
+        activeFilter = activeFilter || 'all';
+        const allEntries = Object.entries(scores || {});
+        const totalCount = allEntries.length;
+        const concernsCount = allEntries.filter(([, v]) => Number(v) >= 1.5).length;
+        const healthyCount = allEntries.filter(([, v]) => Number(v) < 1.5).length;
+
+        let categoriesHtml = '';
+        BIOMETRIC_CATEGORIES.forEach(cat => {
+            const catItems = cat.keys.filter(k => scores[k] !== undefined).map(k => ({
+                key: k,
+                label: cat.labels[k] || nice(k),
+                val: Number(scores[k]),
+                status: getBiometricStatus(Number(scores[k]))
+            }));
+
+            const filteredItems = catItems.filter(item => {
+                if (activeFilter === 'concerns') return item.val >= 1.5;
+                if (activeFilter === 'healthy') return item.val < 1.5;
+                return true;
+            });
+
+            if (filteredItems.length === 0) return;
+
+            categoriesHtml += `
+                <div class="metric-category">
+                    <div class="metric-category-title">
+                        <i class="${cat.icon}" style="color: var(--accent-cyan, #00d2ff);"></i> ${esc(cat.title)}
+                    </div>
+                    <div class="metric-category-grid">
+                        ${filteredItems.map(item => `
+                            <div class="biometric-chip">
+                                <div class="chip-top">
+                                    <span class="chip-name">${esc(item.label)}</span>
+                                    <span class="chip-score">${item.val.toFixed(1)} <span class="muted" style="font-size:10px; font-weight:normal;">/ 5.0</span></span>
+                                </div>
+                                <div class="chip-status-row">
+                                    <span class="chip-status-badge ${item.status.cls}">${item.status.label}</span>
+                                    <span class="muted" style="font-size:10px;">${esc(item.status.desc)}</span>
+                                </div>
+                                <div class="chip-bar">
+                                    <div class="chip-fill ${item.status.cls}" style="width: ${Math.min(100, Math.max(5, (item.val / 5) * 100))}%"></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        });
+
+        // Any leftover keys not in the standard 5 categories
+        const categorizedKeys = new Set(BIOMETRIC_CATEGORIES.flatMap(c => c.keys));
+        const extraItems = allEntries.filter(([k]) => !categorizedKeys.has(k)).map(([k, v]) => ({
+            key: k, label: nice(k), val: Number(v), status: getBiometricStatus(Number(v))
+        })).filter(item => {
+            if (activeFilter === 'concerns') return item.val >= 1.5;
+            if (activeFilter === 'healthy') return item.val < 1.5;
+            return true;
+        });
+
+        if (extraItems.length > 0) {
+            categoriesHtml += `
+                <div class="metric-category">
+                    <div class="metric-category-title"><i class="fa-solid fa-chart-simple" style="color: var(--accent-cyan, #00d2ff);"></i> Additional Biometrics</div>
+                    <div class="metric-category-grid">
+                        ${extraItems.map(item => `
+                            <div class="biometric-chip">
+                                <div class="chip-top">
+                                    <span class="chip-name">${esc(item.label)}</span>
+                                    <span class="chip-score">${item.val.toFixed(1)} <span class="muted" style="font-size:10px; font-weight:normal;">/ 5.0</span></span>
+                                </div>
+                                <div class="chip-status-row">
+                                    <span class="chip-status-badge ${item.status.cls}">${item.status.label}</span>
+                                    <span class="muted" style="font-size:10px;">${esc(item.status.desc)}</span>
+                                </div>
+                                <div class="chip-bar">
+                                    <div class="chip-fill ${item.status.cls}" style="width: ${Math.min(100, Math.max(5, (item.val / 5) * 100))}%"></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="metrics-section">
+                <div class="metrics-header">
+                    <div>
+                        <h3 style="font-size:15px; margin:0 0 2px; font-weight:600;">Clinical Biometric Evaluation</h3>
+                        <div class="muted" style="font-size:12px;">Full diagnostic breakdown across all ${totalCount} indicators</div>
+                    </div>
+                    <div class="metrics-filter-pills" id="metrics-filter-bar">
+                        <button type="button" class="metric-filter-btn ${activeFilter === 'all' ? 'active' : ''}" data-filter="all">
+                            All Indicators (${totalCount})
+                        </button>
+                        <button type="button" class="metric-filter-btn ${activeFilter === 'concerns' ? 'active' : ''}" data-filter="concerns">
+                            Focus Areas (${concernsCount})
+                        </button>
+                        <button type="button" class="metric-filter-btn ${activeFilter === 'healthy' ? 'active' : ''}" data-filter="healthy">
+                            Optimal / Clear (${healthyCount})
+                        </button>
+                    </div>
+                </div>
+
+                <div class="score-transparency-card">
+                    <strong style="color: var(--text-primary);"><i class="fa-solid fa-circle-check" style="margin-right:6px; color: var(--accent-emerald, #10b981);"></i>Complete Biometric Inclusivity:</strong>
+                    Your Skin Confidence Score is computed directly from all ${totalCount} indicators evaluated across your scan. Lower severity scores (0–1.4) reflect healthy, optimal barrier; higher scores (1.5–5.0) pinpoint target areas addressed in your Dr Tanya treatment plan below.
+                </div>
+
+                <div id="metrics-categories-content">
+                    ${categoriesHtml || '<p class="muted" style="padding:16px; text-align:center;">No indicators matching this view.</p>'}
+                </div>
+            </div>
+        `;
+    }
+
     function renderReport(data) {
         lastReport = data;
         const triageRed = data.triage && data.triage.banner_color === 'red';
-        const concerns = Object.entries(data.severity_scores || {}).filter(([a, v]) => v >= 2.0).sort((a, b) => b[1] - a[1]);
+        const score = data.overall_health_score ?? 75;
+        const ratingText = score >= 80 ? 'Optimal Skin Vitality' : score >= 65 ? 'Good Baseline Health' : score >= 50 ? 'Moderate Baseline' : 'Target Care Recommended';
+
         document.getElementById('report-content').innerHTML = `
             <div class="report-triage ${triageRed ? 'red' : 'green'}">
                 <strong>${esc(data.triage?.banner_title || '')}</strong>
                 <p style="margin-top:6px; font-size:13px;">${esc(data.triage?.banner_desc || '')}</p>
             </div>
             <div class="report-score-row">
-                ${radialGauge(data.overall_health_score)}
+                ${radialGauge(score)}
                 <div>
                     <div class="muted">Detected skin type</div>
                     <div style="font-size:22px; font-weight:700;">${esc((data.skin_type || '').toUpperCase())}</div>
-                    <div class="muted">Confidence ${(data.skin_type_confidence * 100).toFixed(1)}%</div>
+                    <div class="muted">Confidence ${(data.skin_type_confidence * 100).toFixed(1)}% · <strong style="color: var(--text-primary);">${ratingText}</strong></div>
+                    <div class="muted" style="font-size:11px; margin-top:2px;">Evaluated across all ${Object.keys(data.severity_scores || {}).length} clinical biometrics</div>
                 </div>
             </div>
-            <h3 style="font-size:14px; margin-bottom:4px;">Conditions detected</h3>
-            <div class="concerns-list">
-                ${concerns.length ? concerns.map(([a, v]) => `
-                    <div class="concern-chip"><div>${esc(nice(a))} — ${v.toFixed(1)}/5.0</div>
-                        <div class="cc-bar"><div class="cc-fill" style="width:${v / 5 * 100}%"></div></div></div>
-                `).join('') : '<p class="muted">No significant concerns flagged by the AI screening.</p>'}
+            <div id="biometrics-mount">
+                ${renderBiometricsHtml(data.severity_scores, 'all')}
             </div>`;
+
+        // Interactive Filter Buttons Handler
+        const mount = document.getElementById('biometrics-mount');
+        if (mount) {
+            mount.addEventListener('click', (e) => {
+                const btn = e.target.closest('.metric-filter-btn');
+                if (!btn) return;
+                const filter = btn.dataset.filter;
+                mount.innerHTML = renderBiometricsHtml(data.severity_scores, filter);
+            });
+        }
+
         renderRecommendedProducts(data.routine);
         renderViewsGallery(data.scan_id, data.views || []);
     }
@@ -271,7 +520,7 @@
         if (!box) return;
         box.innerHTML = keys.length ? `<h3 style="font-size:14px; margin:20px 0 4px;"><i class="fa-solid fa-eye-slash"></i> Your scan photos <span class="muted" style="font-weight:400;">(eyes covered)</span></h3>
             <div class="views-gallery">${keys.map(k => `<a href="/api/scans/${esc(scanId)}/views/${esc(k)}/image" target="_blank" rel="noopener">
-                <img src="/api/scans/${esc(scanId)}/views/${esc(k)}/image" alt="${esc(VIEW_LABELS[k] || k)}" loading="lazy"><span>${esc(VIEW_LABELS[k] || k)}</span></a>`).join('')}</div>` : '';
+                <img src="/api/scans/${esc(scanId)}/views/${esc(k)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="${esc(VIEW_LABELS[k] || k)}" loading="lazy"><span>${esc(VIEW_LABELS[k] || k)}</span></a>`).join('')}</div>` : '';
     }
 
     function renderRecommendedProducts(routine) {
@@ -425,13 +674,45 @@
 
     // ---------------------------------------------------------------- step 5: plan + follow-up
     function renderPlan(con) {
+        let routineHtml = '';
+        try {
+            const r = (con.scan && con.scan.routine) || (con.scan && con.scan.routine_json ? (typeof con.scan.routine_json === 'string' ? JSON.parse(con.scan.routine_json) : con.scan.routine_json) : null);
+            if (r) {
+                const timed = [
+                    ...(r.am_routine || []).map(s => ({ ...s, time: '☀️ AM' })),
+                    ...(r.pm_routine || []).map(s => ({ ...s, time: '🌙 PM' })),
+                    ...(r.weekly_routine || []).map(s => ({ ...s, time: '✨ Weekly' })),
+                ];
+                if (timed.length) {
+                    routineHtml = `
+                        <div style="margin-top:20px; padding:16px; background:rgba(0, 210, 255, 0.04); border:1px solid rgba(0, 210, 255, 0.2); border-radius:10px;">
+                            <h4 style="margin:0 0 10px; font-size:14px; color:var(--accent-cyan, #00d2ff);"><i class="fa-solid fa-prescription-bottle-medical"></i> Doctor-Prescribed Daily Skincare Regimen (Dr. Tanya Products)</h4>
+                            <div style="display:grid; gap:10px;">
+                                ${timed.map(p => `
+                                    <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); padding:8px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
+                                        <div><span class="tag" style="margin-right:8px;">${esc(p.time)}</span><strong>${esc(p.product || p.step || '')}</strong><div class="muted" style="font-size:12px; margin-top:2px;">${esc(p.details || '')}</div></div>
+                                        ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" class="btn btn-secondary btn-small" style="font-size:11px; padding:4px 8px;">View <i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        } catch (e) { console.error('Routine render error:', e); }
+
         document.getElementById('plan-content').innerHTML = `
             <div class="note-box" style="margin-top:0;"><strong>Doctor-approved plan.</strong> Follow only the instructions issued by your consulting doctor.</div>
             <div class="plan-field" style="margin-top:18px;"><div class="pf-label">Symptoms</div><div class="pf-value">${esc(con.symptoms || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Diagnosis</div><div class="pf-value">${esc(con.diagnosis || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Cure / treatment plan</div><div class="pf-value">${esc(con.cure || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Prescription</div><div class="pf-value">${esc(con.prescription || '—')}</div></div>
-            <div class="plan-field"><div class="pf-label">Previous condition / records</div><div class="pf-value">${esc(con.previous_condition || '—')}</div></div>`;
+            <div class="plan-field"><div class="pf-label">Previous condition / records</div><div class="pf-value">${esc(con.previous_condition || '—')}</div></div>
+            ${routineHtml}
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; flex-wrap:wrap; gap:10px;">
+                <button type="button" class="btn btn-secondary btn-small" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Save Report (PDF)</button>
+                <span class="muted" style="font-size:12px;">Consultation ID: ${esc(con.id)}</span>
+            </div>`;
         const shortDate = iso => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
         const side = document.getElementById('plan-side');
         if (side) side.innerHTML = `
@@ -519,6 +800,19 @@
         const bar = document.getElementById('session-bar');
         if (bar) bar.innerHTML = `${esc(user.full_name)} · ID ${esc(user.mrn || user.user_code || '')} · <a href="#" id="logout-link">Sign out</a>`;
         document.getElementById('logout-link')?.addEventListener('click', e => { e.preventDefault(); window.clarityLogout(); });
+
+        if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            const errEl = document.getElementById('cam-error');
+            if (errEl) {
+                errEl.innerHTML = `
+                    <div style="background: rgba(0, 210, 255, 0.08); border: 1px solid rgba(0, 210, 255, 0.25); border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 13px; line-height: 1.4; text-align: left;">
+                        <span style="color: var(--accent-cyan, #00d2ff); font-weight: 600;">💡 Testing on this Mac?</span>
+                        Browsers block camera access over plain HTTP on IP addresses (<code>${location.hostname}</code>).
+                        To use your webcam directly, open <a href="http://localhost:3001/patient" style="color: var(--accent-cyan, #00d2ff); text-decoration: underline; font-weight: 600;">http://localhost:3001/patient</a> (where camera is fully enabled).
+                    </div>
+                `;
+            }
+        }
 
         await syncJourney();
     })();

@@ -11,6 +11,8 @@ import os
 import io
 import hashlib
 
+from PIL import Image
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("CLARITY_DATA_DIR", os.path.join(ROOT, "data"))
 SCAN_DIR = os.path.join(DATA_DIR, "scans")
@@ -22,18 +24,29 @@ def ensure_dirs():
 
 def save_image(pil_image, owner_id, image_id):
     """Writes a scan image as JPEG under SCAN_DIR/<owner_id>/<image_id>.jpg.
-    Returns (path_relative_to_DATA_DIR, sha256_hex)."""
+    Returns (path_relative_to_DATA_DIR, sha256_hex, raw_bytes)."""
     ensure_dirs()
     buf = io.BytesIO()
-    pil_image.convert("RGB").save(buf, format="JPEG", quality=95)
+    img = pil_image.convert("RGB")
+    w, h = img.size
+    max_side = max(w, h)
+    if max_side > 1280:
+        scale = 1280.0 / max_side
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        img = img.resize((int(round(w * scale)), int(round(h * scale))), resample)
+    img.save(buf, format="JPEG", quality=88, optimize=True)
     raw = buf.getvalue()
     sha = hashlib.sha256(raw).hexdigest()
     folder = os.path.join(SCAN_DIR, owner_id or "anonymous")
-    os.makedirs(folder, exist_ok=True)
-    abs_path = os.path.join(folder, f"{image_id}.jpg")
-    with open(abs_path, "wb") as f:
-        f.write(raw)
-    return os.path.relpath(abs_path, DATA_DIR), sha
+    try:
+        os.makedirs(folder, exist_ok=True)
+        abs_path = os.path.join(folder, f"{image_id}.jpg")
+        with open(abs_path, "wb") as f:
+            f.write(raw)
+        rel_path = os.path.relpath(abs_path, DATA_DIR)
+    except OSError:
+        rel_path = f"scans/{owner_id or 'anonymous'}/{image_id}.jpg"
+    return rel_path, sha, raw
 
 
 def abs_path(rel_path):

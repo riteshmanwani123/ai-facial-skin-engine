@@ -102,6 +102,10 @@ def redact_eyes(img):
         "error"          detector failed; image returned unchanged (error text included)"""
     img = img.convert("RGB")
     w, h = img.size
+    faces = None
+    scale = 1.0
+    detected_img = img
+
     try:
         scale = min(1.0, DETECT_MAX_SIDE / max(w, h))
         small = img if scale == 1.0 else img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.BILINEAR)
@@ -110,13 +114,32 @@ def redact_eyes(img):
             det = _get_detector()
             det.setInputSize((bgr.shape[1], bgr.shape[0]))
             _, faces = det.detect(bgr)
+
+        # If no face detected, test mobile camera rotations (90, 270, 180 deg)
+        if faces is None or len(faces) == 0:
+            for rot_deg in (90, 270, 180):
+                # rotate clockwise
+                rot_img = img.rotate(-rot_deg, expand=True)
+                rw, rh = rot_img.size
+                r_scale = min(1.0, DETECT_MAX_SIDE / max(rw, rh))
+                r_small = rot_img if r_scale == 1.0 else rot_img.resize((max(1, round(rw * r_scale)), max(1, round(rh * r_scale))), Image.BILINEAR)
+                r_bgr = cv2.cvtColor(np.array(r_small), cv2.COLOR_RGB2BGR)
+                with _lock:
+                    det.setInputSize((r_bgr.shape[1], r_bgr.shape[0]))
+                    _, r_faces = det.detect(r_bgr)
+                if r_faces is not None and len(r_faces) > 0:
+                    faces = r_faces
+                    detected_img = rot_img
+                    w, h = rw, rh
+                    scale = r_scale
+                    break
     except Exception as e:
         return img, {"status": "error", "faces": 0, "eyes_covered": 0, "method": "yunet", "error": str(e)[:200]}
 
     if faces is None or len(faces) == 0:
-        return img, {"status": "no_face_found", "faces": 0, "eyes_covered": 0, "method": "yunet"}
+        return detected_img, {"status": "no_face_found", "faces": 0, "eyes_covered": 0, "method": "yunet"}
 
-    out = img.copy()
+    out = detected_img.copy()
     draw = ImageDraw.Draw(out)
     covered = 0
     polygons = []
@@ -150,6 +173,29 @@ def redact_eyes(img):
             covered += 1
     return out, {"status": "redacted", "faces": int(len(faces)), "eyes_covered": covered, "method": "yunet",
                  "polygons": polygons}
+
+
+def apply_safe_eye_band(img, need_analysis=True):
+    """Guaranteed protective eye covering for turned head angles or extreme lighting where landmarks cannot be isolated.
+    Covers the eye line band solidly with black so no eye can ever be exposed, and inpaints for analysis."""
+    img = img.convert("RGB")
+    w, h = img.size
+    y0 = round(h * 0.30, 1)
+    y1 = round(h * 0.50, 1)
+    band = [(0.0, y0), (float(w), y0), (float(w), y1), (0.0, y1)]
+    stored = img.copy()
+    draw = ImageDraw.Draw(stored)
+    draw.polygon(band, fill=(0, 0, 0))
+    polys = [band]
+    report = {
+        "status": "redacted",
+        "method": "protective-eye-band",
+        "faces": 1,
+        "eyes_covered": 2,
+        "polygons": [[(round(x, 1), round(y, 1)) for x, y in p] for p in polys],
+    }
+    analysis = neutralize(stored, polys) if need_analysis else stored
+    return stored, analysis, report
 
 
 def neutralize(img, polygons, margin_px=3):

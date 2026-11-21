@@ -61,7 +61,7 @@
     function queueCard(c) {
         const p = c.patient || {};
         return `<div class="queue-card">
-            <img class="qc-thumb" loading="lazy" src="/api/scans/${esc(c.scan_id)}/image" alt="">
+            <img class="qc-thumb" loading="lazy" src="/api/scans/${esc(c.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
             <div class="qc-head"><span class="qc-name">${esc(p.full_name || 'Unknown')}</span><span class="pill">$${c.fee_usd}</span></div>
             <div class="qc-meta">${apptChip(c.appointment)}</div>
             <div class="qc-meta">${esc([p.age && p.age + ' yrs', p.sex, 'Submitted ' + fmtDate(c.created_at)].filter(Boolean).join(' · '))}</div>
@@ -121,7 +121,7 @@
             const concerns = concernList(scan.severity);
             document.getElementById('case-summary').innerHTML = `
                 <div class="report-score-row">
-                    <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" alt="">
+                    <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
                     <div>
                         <div style="font-weight:700; font-size:16px;">${esc(p.full_name || '')} — ${esc(p.age || '?')} yrs, ${esc(p.sex || 'unspecified')}${p.mrn ? ` <span class="tag">${esc(p.mrn)}</span>` : ''}</div>
                         <div class="muted">AI: ${esc(scan.skin_type_pred)} (${Math.round((scan.skin_type_conf || 0) * 100)}%) · score ${scan.overall_score}/100 · triage ${esc(scan.triage_status || '')}</div>
@@ -165,7 +165,7 @@
             if (!box || !d.views || d.views.length < 2) return; // single-photo (older) scans keep the original look
             box.innerHTML = `<h3 style="font-size:13px; margin:16px 0 4px;"><i class="fa-solid fa-camera"></i> Captured angles <span class="muted" style="font-weight:400;">(patient's eyes covered before storage — click to enlarge)</span></h3>
                 <div class="views-gallery">${d.views.map(v => `<a href="${esc(v.url)}" target="_blank" rel="noopener">
-                    <img src="${esc(v.url)}" alt="${esc(VIEW_LABELS[v.view] || v.view)}" loading="lazy"><span>${esc(VIEW_LABELS[v.view] || v.view)}</span></a>`).join('')}</div>`;
+                    <img src="${esc(v.url)}" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="${esc(VIEW_LABELS[v.view] || v.view)}" loading="lazy"><span>${esc(VIEW_LABELS[v.view] || v.view)}</span></a>`).join('')}</div>`;
         }).catch(() => { });
     }
 
@@ -201,7 +201,19 @@
     // ------------------------------------------------------------- auth gate
     (async function init() {
         const user = await window.requireAuth('clinician');
-        if (!user) return; // requireAuth already redirected to /login
+        if (!user) {
+            const grid = document.getElementById('queue-grid');
+            if (grid) {
+                grid.innerHTML = `<div class="note-box" style="margin:20px;text-align:center;background:#fef2f2;border:1px solid #fecaca;padding:24px;border-radius:12px;">
+                    <h3 style="color:#991b1b;margin-bottom:8px;"><i class="fa-solid fa-user-doctor"></i> Doctor Login Required</h3>
+                    <p style="color:#7f1d1d;margin-bottom:16px;">You are currently signed in with a Patient account (or not signed in). Sign in as Doctor to review cases in the queue.</p>
+                    <a href="/login?as=doctor" class="btn btn-primary" style="display:inline-block;padding:10px 20px;font-weight:600;text-decoration:none;">
+                        Sign In as Doctor (Dr. Tanya Unni)
+                    </a>
+                </div>`;
+            }
+            return;
+        }
         const bar = document.getElementById('session-bar');
         if (bar) bar.innerHTML = `${esc(user.full_name)} · ID ${esc(user.user_code || '')} · <a href="#" id="logout-link">Sign out</a>`;
         document.getElementById('logout-link')?.addEventListener('click', e => { e.preventDefault(); window.clarityLogout(); });

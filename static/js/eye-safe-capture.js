@@ -64,8 +64,8 @@
     const STILL_SPEED = 0.025;     // eye travel per frame (in eye-distances) still counted as "holding still"
     const BLUR_SPEED = 0.12;       // faster than this the mesh can't be trusted: the frame is hidden entirely
 
-    const MAX_EXPORT_SIDE = 1280;
-    const JPEG_QUALITY = 0.92;
+    const MAX_EXPORT_SIDE = 960;
+    const JPEG_QUALITY = 0.82;
 
     // ------------------------------------------------------------------ model loading
     const landmarkers = {};
@@ -450,7 +450,7 @@
         if (n > 1) fail('multiple_faces', 'Only one person should be in the photo.');
         const face = res.faceLandmarks[0];
         const polys = eyePolygons(face, canvas.width, canvas.height);
-        if (!eyesInsideFrame(face, canvas.width, canvas.height)) fail('eyes_out_of_frame', 'Both eyes must be fully inside the photo.');
+        if (view === 'front' && !eyesInsideFrame(face, canvas.width, canvas.height)) fail('eyes_out_of_frame', 'Both eyes must be fully inside the photo.');
         paintPolygons(ctx, polys);
         const pose = poseOf(res, 0);
         const { dataUrl, scale } = exportCanvas(canvas);

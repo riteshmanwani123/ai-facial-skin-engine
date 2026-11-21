@@ -520,7 +520,7 @@
         if (!box) return;
         box.innerHTML = keys.length ? `<h3 style="font-size:14px; margin:20px 0 4px;"><i class="fa-solid fa-eye-slash"></i> Your scan photos <span class="muted" style="font-weight:400;">(eyes covered)</span></h3>
             <div class="views-gallery">${keys.map(k => `<a href="/api/scans/${esc(scanId)}/views/${esc(k)}/image" target="_blank" rel="noopener">
-                <img src="/api/scans/${esc(scanId)}/views/${esc(k)}/image" alt="${esc(VIEW_LABELS[k] || k)}" loading="lazy"><span>${esc(VIEW_LABELS[k] || k)}</span></a>`).join('')}</div>` : '';
+                <img src="/api/scans/${esc(scanId)}/views/${esc(k)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="${esc(VIEW_LABELS[k] || k)}" loading="lazy"><span>${esc(VIEW_LABELS[k] || k)}</span></a>`).join('')}</div>` : '';
     }
 
     function renderRecommendedProducts(routine) {
@@ -674,13 +674,45 @@
 
     // ---------------------------------------------------------------- step 5: plan + follow-up
     function renderPlan(con) {
+        let routineHtml = '';
+        try {
+            const r = (con.scan && con.scan.routine) || (con.scan && con.scan.routine_json ? (typeof con.scan.routine_json === 'string' ? JSON.parse(con.scan.routine_json) : con.scan.routine_json) : null);
+            if (r) {
+                const timed = [
+                    ...(r.am_routine || []).map(s => ({ ...s, time: '☀️ AM' })),
+                    ...(r.pm_routine || []).map(s => ({ ...s, time: '🌙 PM' })),
+                    ...(r.weekly_routine || []).map(s => ({ ...s, time: '✨ Weekly' })),
+                ];
+                if (timed.length) {
+                    routineHtml = `
+                        <div style="margin-top:20px; padding:16px; background:rgba(0, 210, 255, 0.04); border:1px solid rgba(0, 210, 255, 0.2); border-radius:10px;">
+                            <h4 style="margin:0 0 10px; font-size:14px; color:var(--accent-cyan, #00d2ff);"><i class="fa-solid fa-prescription-bottle-medical"></i> Doctor-Prescribed Daily Skincare Regimen (Dr. Tanya Products)</h4>
+                            <div style="display:grid; gap:10px;">
+                                ${timed.map(p => `
+                                    <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); padding:8px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
+                                        <div><span class="tag" style="margin-right:8px;">${esc(p.time)}</span><strong>${esc(p.product || p.step || '')}</strong><div class="muted" style="font-size:12px; margin-top:2px;">${esc(p.details || '')}</div></div>
+                                        ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" class="btn btn-secondary btn-small" style="font-size:11px; padding:4px 8px;">View <i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        } catch (e) { console.error('Routine render error:', e); }
+
         document.getElementById('plan-content').innerHTML = `
             <div class="note-box" style="margin-top:0;"><strong>Doctor-approved plan.</strong> Follow only the instructions issued by your consulting doctor.</div>
             <div class="plan-field" style="margin-top:18px;"><div class="pf-label">Symptoms</div><div class="pf-value">${esc(con.symptoms || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Diagnosis</div><div class="pf-value">${esc(con.diagnosis || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Cure / treatment plan</div><div class="pf-value">${esc(con.cure || '—')}</div></div>
             <div class="plan-field"><div class="pf-label">Prescription</div><div class="pf-value">${esc(con.prescription || '—')}</div></div>
-            <div class="plan-field"><div class="pf-label">Previous condition / records</div><div class="pf-value">${esc(con.previous_condition || '—')}</div></div>`;
+            <div class="plan-field"><div class="pf-label">Previous condition / records</div><div class="pf-value">${esc(con.previous_condition || '—')}</div></div>
+            ${routineHtml}
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; flex-wrap:wrap; gap:10px;">
+                <button type="button" class="btn btn-secondary btn-small" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Save Report (PDF)</button>
+                <span class="muted" style="font-size:12px;">Consultation ID: ${esc(con.id)}</span>
+            </div>`;
         const shortDate = iso => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
         const side = document.getElementById('plan-side');
         if (side) side.innerHTML = `
