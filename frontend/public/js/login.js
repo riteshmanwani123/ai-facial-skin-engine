@@ -37,8 +37,10 @@
                 method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password }),
             });
-            const data = await r.json();
-            if (!r.ok) throw new Error(data.detail || data.error || 'Sign-in failed');
+            let data = {};
+            const text = await r.text();
+            try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
+            if (!r.ok) throw new Error(data.detail || data.error || data.message || 'Sign-in failed');
             window.location.href = redirectTarget || (data.role === 'admin' ? '/admin' : data.role === 'clinician' ? '/doctor' : '/patient');
         } catch (err) {
             if (errBox) errBox.textContent = err.message;
@@ -106,14 +108,16 @@
         e.preventDefault();
         const f = Object.fromEntries(new FormData(e.target).entries());
         const errBox = document.getElementById('login-error');
-        errBox.textContent = '';
+        errBox.textContent = 'Signing in…';
         try {
             const r = await fetch('/api/auth/login', {
                 method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(f),
             });
-            const data = await r.json();
-            if (!r.ok) throw new Error(data.detail || data.error || 'Sign-in failed');
+            let data = {};
+            const text = await r.text();
+            try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
+            if (!r.ok) throw new Error(data.detail || data.error || data.message || 'Sign-in failed');
             window.location.href = data.role === 'admin' ? '/admin' : data.role === 'clinician' ? '/doctor' : '/patient';
         } catch (err) {
             errBox.textContent = err.message;

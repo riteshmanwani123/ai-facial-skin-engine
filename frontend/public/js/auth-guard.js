@@ -3,9 +3,13 @@
    signed in or wrong role) and window.clarityLogout(). */
 (function () {
     async function fetchMe() {
-        const r = await fetch('/api/auth/me', { credentials: 'include' });
-        if (!r.ok) return null;
-        return r.json();
+        try {
+            const r = await fetch('/api/auth/me', { credentials: 'include' });
+            if (!r.ok) return null;
+            return await r.json();
+        } catch (_) {
+            return null;
+        }
     }
 
     window.requireAuth = async function (role) {

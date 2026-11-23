@@ -15,8 +15,10 @@
             st.loading = true; st.error = ''; paint();
             try {
                 const r = await fetch('/api/schedule/week' + (dateStr ? `?date=${encodeURIComponent(dateStr)}` : ''), { credentials: 'include' });
-                const d = await r.json();
-                if (!r.ok) throw new Error(d.detail || d.error || 'Could not load times');
+                let d = {};
+                const text = await r.text();
+                try { d = JSON.parse(text); } catch (_) { d = { detail: text || r.statusText }; }
+                if (!r.ok) throw new Error(d.detail || d.error || d.message || 'Could not load times');
                 st.week = d;
                 // keep the chosen day when paging weeks isn't possible; otherwise land on the first day with room
                 const sel = st.selected ? d.days.findIndex(x => x.date === st.selected.date) : -1;

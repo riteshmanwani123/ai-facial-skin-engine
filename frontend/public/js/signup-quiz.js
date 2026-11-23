@@ -164,8 +164,10 @@
         btn.disabled = true; btn.textContent = 'Creating your account…';
         try {
             const r = await fetch('/api/auth/signup', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(data.detail || data.error || 'Could not create account');
+            let data = {};
+            const text = await r.text();
+            try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
+            if (!r.ok) throw new Error(data.detail || data.error || data.message || 'Could not create account');
             st.name = data.full_name || body.full_name; st.stage = 'done'; save();
             renderDone();
         } catch (ex) {
