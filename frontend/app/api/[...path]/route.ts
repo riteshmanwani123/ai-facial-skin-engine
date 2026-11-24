@@ -9,7 +9,7 @@ import crypto from "crypto";
 
 const SECRET = process.env.CLARITY_JWT_SECRET || "clarity-in-memory-secure-secret-2026";
 const SESSION_COOKIE = "clarity_session";
-const API_BASE = process.env.CLARITY_API_BASE;
+const API_BASE = process.env.CLARITY_API_BASE || "https://ai-facial-skin-engine.onrender.com";
 
 function signToken(payload: Record<string, any>): string {
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -330,20 +330,29 @@ function getUserFromReq(req: NextRequest): UserRecord | null {
 
 // Optional pass-through helper with fail-safe fallback
 async function forwardToBackend(req: NextRequest, pathStr: string): Promise<Response | null> {
-  if (!API_BASE || API_BASE.includes("localhost") || API_BASE.includes("127.0.0.1")) {
+  const targetBase = API_BASE || "https://ai-facial-skin-engine.onrender.com";
+  if (!targetBase || targetBase.includes("localhost") || targetBase.includes("127.0.0.1")) {
     return null;
   }
   try {
-    const url = new URL(pathStr, API_BASE);
+    const url = new URL(pathStr, targetBase);
     url.search = req.nextUrl.search;
 
-    const headers = new Headers(req.headers);
-    headers.set("host", new URL(API_BASE).host);
+    const headers = new Headers();
+    req.headers.forEach((val, key) => {
+      const lower = key.toLowerCase();
+      // Drop client hop-by-hop & host headers
+      if (lower !== "host" && lower !== "connection" && lower !== "content-length") {
+        headers.set(key, val);
+      }
+    });
+    headers.set("host", new URL(targetBase).host);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 14000);
 
-    const body = req.method !== "GET" && req.method !== "HEAD" ? await req.clone().blob() : undefined;
+    const body =
+      req.method !== "GET" && req.method !== "HEAD" ? await req.clone().arrayBuffer() : undefined;
 
     const resp = await fetch(url.toString(), {
       method: req.method,
@@ -358,7 +367,43 @@ async function forwardToBackend(req: NextRequest, pathStr: string): Promise<Resp
     if (resp.status === 429 || resp.status >= 502) {
       return null;
     }
-    return resp;
+
+    // If backend 404s on mock demo IDs that only exist in local memory, fall back to local store
+    if (resp.status === 404 && (pathStr.includes("/c_demo_") || pathStr.includes("/scan_demo_"))) {
+      return null;
+    }
+
+    const respBody = await resp.arrayBuffer();
+    const resHeaders = new Headers();
+    resp.headers.forEach((value, key) => {
+      const lower = key.toLowerCase();
+      // Drop compression/framing headers that node fetch has already decoded
+      if (
+        lower !== "content-encoding" &&
+        lower !== "transfer-encoding" &&
+        lower !== "content-length" &&
+        lower !== "connection" &&
+        lower !== "keep-alive"
+      ) {
+        resHeaders.set(key, value);
+      }
+    });
+
+    if (typeof (resp.headers as any).getSetCookie === "function") {
+      const cookies = (resp.headers as any).getSetCookie();
+      if (cookies && cookies.length > 0) {
+        resHeaders.delete("set-cookie");
+        for (const cookie of cookies) {
+          resHeaders.append("set-cookie", cookie);
+        }
+      }
+    }
+
+    return new NextResponse(respBody, {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: resHeaders,
+    });
   } catch {
     return null;
   }
@@ -597,6 +642,58 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
           email: u.email,
           mrn: u.mrn || "MRN-00001",
         })),
+    });
+  }
+
+  if (subPath.startsWith("scans/") && (subPath.endsWith("/image") || subPath.includes("/views/"))) {
+    return NextResponse.redirect(new URL("/images/clarity_logo.jpg", req.nextUrl.origin));
+  }
+
+  if (subPath === "products") {
+    return NextResponse.json({
+      products: [
+        {
+          id: "prod_01",
+          name: "Holy Basil Face Serum",
+          tagline: "Ayurvedic anti-inflammatory and barrier-repair serum",
+          price_inr: 2800,
+          url: "https://drtanya.in/products/holy-basil-face-serum",
+          concerns: ["redness_severity", "texture_roughness", "dehydration"],
+        },
+        {
+          id: "prod_02",
+          name: "Holy Basil Day & Night Cream",
+          tagline: "Intense peptide and botanical hydration barrier cream",
+          price_inr: 3200,
+          url: "https://drtanya.in/products/holy-basil-day-night-cream",
+          concerns: ["dehydration", "texture_roughness"],
+        },
+        {
+          id: "prod_03",
+          name: "Advanced Retinol Serum",
+          tagline: "Encapsulated retinol for cellular turnover and fine pores",
+          price_inr: 3500,
+          url: "https://drtanya.in/products/advanced-retinol-serum",
+          concerns: ["acne_severity", "open_pores", "texture_roughness"],
+        },
+        {
+          id: "prod_04",
+          name: "Eye Lift Tightening Serum",
+          tagline: "Snap-8 octapeptide and squalane complex for orbital brightening",
+          price_inr: 2000,
+          url: "https://drtanya.in/products/eye-lift-tightening-serum",
+          concerns: ["pigmentation_melasma", "dehydration"],
+        },
+        {
+          id: "prod_05",
+          name: "Miracle Cream",
+          tagline: "Ultra-nourishing restorative treatment for deep overnight repair",
+          price_inr: 3800,
+          url: "https://drtanya.in/products/miracle-cream",
+          concerns: ["dehydration", "texture_roughness", "redness_severity"],
+        },
+      ],
+      catalog_gaps: [],
     });
   }
 

@@ -1,0 +1,29 @@
+name: Clarity Live Pipeline Health Probe
+
+on:
+  schedule:
+    # Run every 15 minutes to keep Render backend warm and verify live deployment
+    - cron: '*/15 * * * *'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Synthetic Health & E2E Route Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Clarity Live Pipeline Probe
+        run: |
+          python3 pipeline_probe.py
