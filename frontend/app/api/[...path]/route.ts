@@ -86,13 +86,19 @@ interface ConsultationRecord {
   status: "awaiting_payment" | "awaiting_doctor" | "completed";
   fee_usd: number;
   paid_at?: string;
+  completed_at?: string;
   created_at: string;
   doctor_name?: string;
   doctor_notes?: string;
+  symptoms?: string;
+  diagnosis?: string;
+  cure?: string;
+  prescription?: string;
   prescriptions?: string[];
   patient?: any;
   scan?: any;
   appointment?: any;
+  ai_suggestions?: any;
 }
 
 const CONSULTATIONS: Map<string, ConsultationRecord> = new Map([
@@ -368,8 +374,23 @@ async function forwardToBackend(req: NextRequest, pathStr: string): Promise<Resp
       return null;
     }
 
-    // If backend 404s on mock demo IDs that only exist in local memory, fall back to local store
-    if (resp.status === 404 && (pathStr.includes("/c_demo_") || pathStr.includes("/scan_demo_"))) {
+    // If backend 404s on in-memory demo IDs, fall back to local store
+    if (resp.status === 404 && (pathStr.includes("/c_") || pathStr.includes("/con_") || pathStr.includes("/scan_") || pathStr.includes("/PT-"))) {
+      return null;
+    }
+
+    // If backend returns 400 on consultation creation (e.g. scan_id not in PostgreSQL), fall back to local creation
+    if (resp.status === 400 && pathStr === "/api/consultations") {
+      return null;
+    }
+
+    // If backend returns 404 or 400 on payment/appointment for a local consultation, fall back to local handler
+    if ((resp.status === 404 || resp.status === 400) && (pathStr.includes("/pay") || pathStr.includes("/appointment"))) {
+      return null;
+    }
+
+    // If backend returns 401 or 404 on me/journey for a local patient session, fall back to local handler
+    if ((resp.status === 401 || resp.status === 404) && pathStr === "/api/me/journey") {
       return null;
     }
 
@@ -417,9 +438,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   const { path: pathSegments } = await params;
   const subPath = pathSegments.join("/");
 
-  // Try external backend if available and healthy
-  const proxied = await forwardToBackend(req, `/api/${subPath}`);
-  if (proxied) return proxied;
+  // For consultations list, consultation detail, and me/journey, let dedicated handlers manage merging/fallback
+  if (subPath !== "consultations" && !subPath.startsWith("consultations/") && subPath !== "me/journey") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied) return proxied;
+  }
 
   // Local Resilient Handler
   if (subPath === "auth/me") {
@@ -439,6 +462,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   }
 
   if (subPath === "me/journey") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status === 200) {
+      return proxied;
+    }
+
     const u = getUserFromReq(req);
     const patientId = u?.patient_id || "PT-00001";
     // Check if patient has any active consultation
@@ -459,6 +487,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
           routine: getDrTanyaRoutine(con.scan.skin_type || "Combination", con.scan.severity || {}),
           views: ["front"],
         } : null,
+        today: new Date().toISOString().slice(0, 10),
+      });
+    }
+
+    // Check if patient has an unconsulted scan
+    const scan = Array.from(SCANS.values()).reverse().find((s) => s.patient_id === patientId) || Array.from(SCANS.values()).pop();
+    if (scan) {
+      return NextResponse.json({
+        stage: "report",
+        can_start_new: false,
+        consultation_id: null,
+        checkpoints: [],
+        report: scan,
         today: new Date().toISOString().slice(0, 10),
       });
     }
@@ -494,29 +535,51 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   }
 
   if (subPath === "consultations") {
+    let backendList: any[] = [];
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status === 200) {
+      try {
+        const cloned = proxied.clone();
+        const data = await cloned.json();
+        backendList = data.consultations || [];
+      } catch (_) {}
+    }
     const u = getUserFromReq(req);
     const status = req.nextUrl.searchParams.get("status");
-    let list = Array.from(CONSULTATIONS.values());
+    let localList = Array.from(CONSULTATIONS.values());
     if (u?.role === "patient") {
-      list = list.filter((c) => c.patient_id === u.patient_id);
+      localList = localList.filter((c) => c.patient_id === u.patient_id);
     }
     if (status) {
-      list = list.filter((c) => c.status === status);
+      localList = localList.filter((c) => c.status === status);
     }
-    return NextResponse.json({ consultations: list });
+    const seenIds = new Set(backendList.map((c) => c.id));
+    const merged = [...backendList];
+    for (const item of localList) {
+      if (!seenIds.has(item.id)) {
+        merged.push(item);
+      }
+    }
+    return NextResponse.json({ consultations: merged });
   }
 
   if (subPath.startsWith("consultations/")) {
     const parts = subPath.split("/");
     const cid = parts[1];
     if (cid === "pending-followups") {
+      const proxied = await forwardToBackend(req, `/api/${subPath}`);
+      if (proxied && proxied.status < 400) return proxied;
       return NextResponse.json({ consultations: [] });
     }
-    const con = CONSULTATIONS.get(cid);
-    if (!con) {
-      return NextResponse.json({ detail: "Consultation not found" }, { status: 404 });
+    const localCon = CONSULTATIONS.get(cid);
+    if (localCon) {
+      return NextResponse.json(localCon);
     }
-    return NextResponse.json(con);
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status < 400) {
+      return proxied;
+    }
+    return NextResponse.json({ detail: "Consultation not found" }, { status: 404 });
   }
 
   if (subPath.startsWith("scans/") && subPath.endsWith("/views")) {
@@ -704,9 +767,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pat
   const { path: pathSegments } = await params;
   const subPath = pathSegments.join("/");
 
-  // Try external backend if available and healthy
-  const proxied = await forwardToBackend(req, `/api/${subPath}`);
-  if (proxied) return proxied;
+  // For consultations, pay, appointment, and analyze, let dedicated handlers manage forwarding with resilient fallback
+  if (subPath !== "consultations" && !subPath.startsWith("consultations/") && subPath !== "analyze") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied) return proxied;
+  }
 
   let body: any = {};
   try {
@@ -842,6 +907,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pat
 
   // 4. ANALYZE SKIN (AI Clinical Biometrics Engine)
   if (subPath === "analyze") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status === 200) return proxied;
+
     const u = getUserFromReq(req);
     const scanId = `scan_${Date.now()}`;
     const severity = {
@@ -895,6 +963,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pat
 
   // 5. CREATE CONSULTATION
   if (subPath === "consultations") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status < 400) return proxied;
+
     const u = getUserFromReq(req);
     const patientId = u?.patient_id || "PT-00001";
     const scanId = body.scan_id || Array.from(SCANS.keys()).pop() || "scan_demo_01";
@@ -920,6 +991,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pat
         mrn: u?.mrn || "MRN-00001",
       },
       scan,
+      ai_suggestions: {
+        symptoms: "Mild facial erythema and combination texture with visible pore enlargement.",
+        diagnosis: "Grade 1 Acne Vulgaris with epidermal dehydration and mild solar erythema.",
+        cure: "Non-comedogenic barrier hydration protocol and topical antioxidant serum.",
+        prescription: "Dr. Tanya Holy Basil Face Serum AM, Retinol PM, Broad Spectrum SPF 50+.",
+      },
     };
     CONSULTATIONS.set(cid, newCon);
     return NextResponse.json(newCon);
@@ -1011,9 +1088,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ pa
   const { path: pathSegments } = await params;
   const subPath = pathSegments.join("/");
 
-  // Try external backend if available and healthy
-  const proxied = await forwardToBackend(req, `/api/${subPath}`);
-  if (proxied) return proxied;
+  if (!subPath.startsWith("consultations/")) {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied) return proxied;
+  }
 
   let body: any = {};
   try {
@@ -1024,14 +1102,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ pa
 
   if (subPath.startsWith("consultations/")) {
     const cid = subPath.split("/")[1];
-    const con = CONSULTATIONS.get(cid);
+    let con = CONSULTATIONS.get(cid);
+    if (!con && !cid.startsWith("con_") && !cid.startsWith("c_")) {
+      const proxied = await forwardToBackend(req, `/api/${subPath}`);
+      if (proxied && proxied.status < 400) return proxied;
+    }
+    if (!con) {
+      con = Array.from(CONSULTATIONS.values()).find((c) => c.id === cid);
+    }
     if (!con) {
       return NextResponse.json({ detail: "Consultation not found" }, { status: 404 });
     }
     con.status = "completed";
-    con.doctor_notes = body.doctor_notes || body.notes || con.doctor_notes;
-    con.prescriptions = body.prescriptions || con.prescriptions;
-    CONSULTATIONS.set(cid, con);
+    con.doctor_name = body.doctor_name || "Dr. Tanya Unni";
+    con.symptoms = body.symptoms || con.symptoms;
+    con.diagnosis = body.diagnosis || con.diagnosis;
+    con.cure = body.cure || con.cure;
+    con.prescription = body.prescription || con.prescription;
+    con.completed_at = new Date().toISOString();
+    CONSULTATIONS.set(con.id, con);
     return NextResponse.json(con);
   }
 

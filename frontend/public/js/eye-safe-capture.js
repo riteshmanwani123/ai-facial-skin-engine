@@ -265,8 +265,19 @@
 
         stop() {
             this.running = false;
-            if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-            this.stream = null; this.video.srcObject = null; this.goodInfo = null; this.bestInfo = null; this.nearestInfo = null; this.prev = null;
+            if (this.stream) {
+                try {
+                    this.stream.getTracks().forEach(t => {
+                        try { t.stop(); } catch (_) {}
+                    });
+                } catch (_) {}
+            }
+            this.stream = null;
+            if (this.video) {
+                try { this.video.pause(); } catch (_) {}
+                try { this.video.srcObject = null; } catch (_) {}
+            }
+            this.goodInfo = null; this.bestInfo = null; this.nearestInfo = null; this.prev = null;
         }
 
         _set(patch) {

@@ -21,6 +21,7 @@
 
     const STEPS = ['scan', 'report', 'payment', 'pending', 'completed'];
     function showStep(name) {
+        if (name !== 'scan') stopCamera();
         STEPS.forEach(s => document.getElementById('step-' + s).classList.toggle('active', s === name));
         document.querySelectorAll('.wp-step').forEach(el => {
             const i = STEPS.indexOf(el.dataset.step), cur = STEPS.indexOf(name);
@@ -134,7 +135,11 @@
         els.err.textContent = '';
         const next = pending();
         setCurrent(next ? next.key : key);
-        if (!next) refreshButtons();
+        if (!next) {
+            refreshButtons();
+            stopCamera();
+            setStatus('All angles captured — camera turned off ✓', 'ok');
+        }
     }
 
     els.start.addEventListener('click', async () => {
@@ -233,6 +238,10 @@
         const next = pending();
         setCurrent(next ? next.key : v.key);
         refreshButtons(); renderChips();
+        if (!next) {
+            stopCamera();
+            setStatus('All angles captured — camera turned off ✓', 'ok');
+        }
     });
 
     els.file.addEventListener('change', async e => {
@@ -251,7 +260,25 @@
         }
     });
 
-    function stopCamera() { if (session) { session.stop(); session = null; } setProgress(0); els.start.style.display = 'inline-flex'; els.start.disabled = false; els.capture.style.display = 'none'; els.skip.style.display = 'none'; setStatus('Camera is off'); }
+    function stopCamera() {
+        if (session) {
+            try { session.stop(); } catch (_) {}
+            session = null;
+        }
+        if (els.video && els.video.srcObject) {
+            try {
+                els.video.srcObject.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+                els.video.srcObject = null;
+                els.video.pause();
+            } catch (_) {}
+        }
+        setProgress(0);
+        els.start.style.display = 'inline-flex';
+        els.start.disabled = false;
+        els.capture.style.display = 'none';
+        els.skip.style.display = 'none';
+        setStatus('Camera is off');
+    }
 
     function resetCapture() {
         stopCamera(); state.views = {}; state.skipped = {}; els.analyze.style.display = 'none'; els.err.textContent = '';
@@ -260,6 +287,7 @@
 
     els.analyze.addEventListener('click', () => {
         if (!state.views.front) return;
+        stopCamera();
         document.getElementById('scan-loading').style.display = 'block';
         els.analyze.disabled = true;
         const extra = {}, redaction = { front: { polygons: state.views.front.polygons } };
@@ -483,6 +511,9 @@
 
     function renderReport(data) {
         lastReport = data;
+        if (data && (data.scan_id || data.id)) {
+            state.scanId = data.scan_id || data.id;
+        }
         const triageRed = data.triage && data.triage.banner_color === 'red';
         const score = data.overall_health_score ?? 75;
         const ratingText = score >= 80 ? 'Optimal Skin Vitality' : score >= 65 ? 'Good Baseline Health' : score >= 50 ? 'Moderate Baseline' : 'Target Care Recommended';
@@ -569,7 +600,14 @@
     }
 
     document.getElementById('start-consult-btn').addEventListener('click', () => {
-        api('/api/consultations', { method: 'POST', body: JSON.stringify({ scan_id: state.scanId }) })
+        const sid = state.scanId || (lastReport && (lastReport.scan_id || lastReport.id)) || (state.journey && state.journey.report && (state.journey.report.scan_id || state.journey.report.id));
+        if (!sid) {
+            alert('Please take a facial skin scan first before proceeding to consultation.');
+            showStep('scan');
+            return;
+        }
+        state.scanId = sid;
+        api('/api/consultations', { method: 'POST', body: JSON.stringify({ scan_id: sid }) })
             .then(con => {
                 state.consultationId = con.id;
                 showStep('payment');
