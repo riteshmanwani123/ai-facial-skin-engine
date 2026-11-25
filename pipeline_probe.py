@@ -33,7 +33,7 @@ RESET = "\033[0m"
 
 
 class LiveProbeRunner:
-    def __init__(self, vercel_url=VERCEL_BASE, render_url=RENDER_BASE, timeout=20):
+    def __init__(self, vercel_url=VERCEL_BASE, render_url=RENDER_BASE, timeout=45):
         self.vercel = vercel_url.rstrip("/")
         self.render = render_url.rstrip("/")
         self.timeout = timeout
