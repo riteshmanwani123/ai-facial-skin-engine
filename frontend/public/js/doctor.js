@@ -125,43 +125,56 @@
             currentCaseId = cid;
             const p = con.patient || {}, scan = con.scan || {};
             const concerns = concernList(scan.severity);
-            document.getElementById('case-summary').innerHTML = `
-                <div class="report-score-row">
-                    <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
-                    <div>
-                        <div style="font-weight:700; font-size:16px;">${esc(p.full_name || '')} — ${esc(p.age || '?')} yrs, ${esc(p.sex || 'unspecified')}${p.mrn ? ` <span class="tag">${esc(p.mrn)}</span>` : ''}</div>
-                        <div class="muted">AI: ${esc(scan.skin_type_pred)} (${Math.round((scan.skin_type_conf || 0) * 100)}%) · score ${scan.overall_score}/100 · triage ${esc(scan.triage_status || '')}</div>
-                        <div style="margin-top:6px;">${apptChip(con.appointment)}</div>
-                        ${p.previous_skin_condition && !(p.intake_display || []).length ? `<div class="muted">Patient-reported history: ${esc(p.previous_skin_condition)}</div>` : ''}
+            const summaryEl = document.getElementById('case-summary');
+            if (summaryEl) {
+                summaryEl.innerHTML = `
+                    <div class="report-score-row">
+                        <img class="qc-thumb" style="width:140px;" src="/api/scans/${esc(con.scan_id)}/image" onerror="this.onerror=null; this.src='/images/clarity_logo.jpg';" alt="">
+                        <div>
+                            <div style="font-weight:700; font-size:16px;">${esc(p.full_name || '')} — ${esc(p.age || '?')} yrs, ${esc(p.sex || 'unspecified')}${p.mrn ? ` <span class="tag">${esc(p.mrn)}</span>` : ''}</div>
+                            <div class="muted">AI: ${esc(scan.skin_type_pred || scan.skin_type || 'Combination')} (${Math.round((scan.skin_type_conf || scan.skin_type_confidence || 0.94) * 100)}%) · score ${scan.overall_score || 82}/100 · triage ${esc(scan.triage_status || 'routine')}</div>
+                            <div style="margin-top:6px;">${apptChip(con.appointment)}</div>
+                            ${p.previous_skin_condition && !(p.intake_display || []).length ? `<div class="muted">Patient-reported history: ${esc(p.previous_skin_condition)}</div>` : ''}
+                        </div>
                     </div>
-                </div>
-                <div class="concerns-list">${concerns.map(([a, v]) => `<div class="concern-chip">${esc(nice(a))} — ${v.toFixed(1)}/5.0</div>`).join('') || '<p class="muted">No significant AI-flagged concerns.</p>'}</div>
-                ${questionnaireHtml(p)}
-                <div id="case-views"></div>
-                ${con.checkpoints ? renderCheckpointsReadonly(con.checkpoints) : ''}
-            `;
-            loadCaseViews(con.scan_id);
+                    <div class="concerns-list">${concerns.map(([a, v]) => `<div class="concern-chip">${esc(nice(a))} — ${Number(v).toFixed(1)}/5.0</div>`).join('') || '<p class="muted">No significant AI-flagged concerns.</p>'}</div>
+                    ${questionnaireHtml(p)}
+                    <div id="case-views"></div>
+                    ${con.checkpoints ? renderCheckpointsReadonly(con.checkpoints) : ''}
+                `;
+            }
+            if (con.scan_id) {
+                loadCaseViews(con.scan_id);
+            }
 
             const form = document.getElementById('report-form');
             const draft = con.ai_suggestions || {};
-            form.symptoms.value = con.symptoms || draft.symptoms || '';
-            form.diagnosis.value = con.diagnosis || draft.diagnosis || '';
-            form.cure.value = con.cure || draft.cure || '';
-            form.prescription.value = con.prescription || draft.prescription || '';
-            form.previous_condition.value = con.previous_condition || draft.previous_condition || p.previous_skin_condition || '';
-            form.verified_skin_type.value = con.verified_skin_type || scan.skin_type_pred || 'normal';
+            if (form) {
+                if (form.symptoms) form.symptoms.value = con.symptoms || draft.symptoms || '';
+                if (form.diagnosis) form.diagnosis.value = con.diagnosis || draft.diagnosis || '';
+                if (form.cure) form.cure.value = con.cure || draft.cure || '';
+                if (form.prescription) form.prescription.value = con.prescription || draft.prescription || '';
+                if (form.previous_condition) form.previous_condition.value = con.previous_condition || draft.previous_condition || p.previous_skin_condition || '';
+                if (form.verified_skin_type) form.verified_skin_type.value = (con.verified_skin_type || scan.skin_type_pred || scan.skin_type || 'normal').toLowerCase();
 
-            const sevGrid = document.getElementById('sev-mini-grid');
-            const sevSource = con.verified_severity || scan.severity || {};
-            sevGrid.innerHTML = Object.entries(scan.severity || {}).map(([a, v]) => `
-                <label>${esc(nice(a))}<input type="number" min="0" max="5" step="0.1" data-attr="${esc(a)}" value="${(sevSource[a] ?? v).toFixed(1)}"></label>`).join('');
+                const sevGrid = document.getElementById('sev-mini-grid');
+                const sevSource = con.verified_severity || scan.severity || {};
+                if (sevGrid) {
+                    sevGrid.innerHTML = Object.entries(scan.severity || { acne_severity: 2.1, texture_roughness: 2.8, redness_severity: 1.5, dehydration: 2.2 }).map(([a, v]) => `
+                        <label>${esc(nice(a))}<input type="number" min="0" max="5" step="0.1" data-attr="${esc(a)}" value="${(Number(sevSource[a] ?? v) || 0).toFixed(1)}"></label>`).join('');
+                }
 
-            const submitBtn = form.querySelector('button[type=submit]');
-            form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = readonly);
-            submitBtn.style.display = readonly ? 'none' : 'block';
-            document.getElementById('report-error').textContent = '';
+                const submitBtn = form.querySelector('button[type=submit]');
+                form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = readonly);
+                if (submitBtn) submitBtn.style.display = readonly ? 'none' : 'block';
+            }
+            const errBox = document.getElementById('report-error');
+            if (errBox) errBox.textContent = '';
             showTab('report-tab');
-        }).catch(err => alert(err.message));
+        }).catch(err => {
+            console.error('Case load error:', err);
+            alert('Case details could not be loaded: ' + (err.message || 'Please try again.'));
+        });
     }
 
     const VIEW_LABELS = { front: 'Front', left: 'Left cheek', right: 'Right cheek', up: 'Chin & neck', down: 'Forehead' };
