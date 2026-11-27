@@ -443,8 +443,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   const { path: pathSegments } = await params;
   const subPath = pathSegments.join("/");
 
-  // For consultations list, consultation detail, and me/journey, let dedicated handlers manage merging/fallback
-  if (subPath !== "consultations" && !subPath.startsWith("consultations/") && subPath !== "me/journey") {
+  // For consultations list, consultation detail, me/journey, and products, let dedicated handlers manage merging/fallback
+  if (subPath !== "consultations" && !subPath.startsWith("consultations/") && subPath !== "me/journey" && subPath !== "products") {
     const proxied = await forwardToBackend(req, `/api/${subPath}`);
     if (proxied) return proxied;
   }
@@ -787,6 +787,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   }
 
   if (subPath === "products") {
+    const proxied = await forwardToBackend(req, `/api/${subPath}`);
+    if (proxied && proxied.status === 200) {
+      return proxied;
+    }
     return NextResponse.json({
       products: [
         {
