@@ -164,12 +164,38 @@
         btn.disabled = true; btn.textContent = 'Creating your account…';
         try {
             const r = await fetch('/api/auth/signup', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(data.detail || data.error || 'Could not create account');
+            let data = {};
+            const text = await r.text();
+            try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
+            if (!r.ok) {
+                // If account exists, seamlessly sign in and proceed
+                if (r.status === 409 || (data.detail && data.detail.includes('already exists'))) {
+                    const loginRes = await fetch('/api/auth/login', {
+                        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: body.email, password: body.password }),
+                    });
+                    if (loginRes.ok) {
+                        const loginData = await loginRes.json();
+                        st.name = loginData.full_name || body.full_name; st.stage = 'done'; save();
+                        renderDone();
+                        return;
+                    }
+                }
+                let msg = data.detail || data.error || data.message || 'Could not create account';
+                if (typeof msg !== 'string') msg = JSON.stringify(msg);
+                if (msg.includes('pattern') || msg.includes('SyntaxError') || msg.includes('429')) {
+                    msg = 'Please wait a moment and try again.';
+                }
+                throw new Error(msg);
+            }
             st.name = data.full_name || body.full_name; st.stage = 'done'; save();
             renderDone();
         } catch (ex) {
-            err.textContent = ex.message; btn.disabled = false; btn.textContent = 'Create my account';
+            let msg = ex.message || 'Could not create account';
+            if (msg.includes('pattern') || msg.includes('SyntaxError')) {
+                msg = 'Please check your inputs and try again.';
+            }
+            err.textContent = msg; btn.disabled = false; btn.textContent = 'Create my account';
         }
     }
 

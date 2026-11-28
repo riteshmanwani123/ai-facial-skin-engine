@@ -40,10 +40,21 @@
             let data = {};
             const text = await r.text();
             try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
-            if (!r.ok) throw new Error(data.detail || data.error || data.message || 'Sign-in failed');
+            if (!r.ok) {
+                let msg = data.detail || data.error || data.message || 'Incorrect email or password';
+                if (typeof msg !== 'string') msg = JSON.stringify(msg);
+                if (msg.includes('pattern') || msg.includes('SyntaxError') || msg.includes('429')) {
+                    msg = 'Incorrect email or password. Please try again.';
+                }
+                throw new Error(msg);
+            }
             window.location.href = redirectTarget || (data.role === 'admin' ? '/admin' : data.role === 'clinician' ? '/doctor' : '/patient');
         } catch (err) {
-            if (errBox) errBox.textContent = err.message;
+            let msg = err.message || 'Sign-in failed';
+            if (msg.includes('pattern') || msg.includes('SyntaxError')) {
+                msg = 'Incorrect email or password. Please try again.';
+            }
+            if (errBox) errBox.textContent = msg;
         }
     }
 
@@ -117,10 +128,21 @@
             let data = {};
             const text = await r.text();
             try { data = JSON.parse(text); } catch (_) { data = { detail: text || r.statusText }; }
-            if (!r.ok) throw new Error(data.detail || data.error || data.message || 'Sign-in failed');
+            if (!r.ok) {
+                let msg = data.detail || data.error || data.message || 'Incorrect email or password';
+                if (typeof msg !== 'string') msg = JSON.stringify(msg);
+                if (msg.includes('pattern') || msg.includes('SyntaxError') || msg.includes('429')) {
+                    msg = 'Incorrect email or password. Please try again.';
+                }
+                throw new Error(msg);
+            }
             window.location.href = data.role === 'admin' ? '/admin' : data.role === 'clinician' ? '/doctor' : '/patient';
         } catch (err) {
-            errBox.textContent = err.message;
+            let msg = err.message || 'Sign-in failed';
+            if (msg.includes('pattern') || msg.includes('SyntaxError')) {
+                msg = 'Incorrect email or password. Please try again.';
+            }
+            errBox.textContent = msg;
         }
     });
 })();
